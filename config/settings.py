@@ -168,6 +168,12 @@ def get_page_url(program: str, page: str) -> str:
     return base + path
 
 
+# ── Memgraph connection ───────────────────────────────────────────────────────
+MEMGRAPH_HOST     = os.environ.get("MEMGRAPH_HOST",     "")
+MEMGRAPH_PORT     = int(os.environ.get("MEMGRAPH_PORT", "7687"))
+MEMGRAPH_USERNAME = os.environ.get("MEMGRAPH_USERNAME", "")
+MEMGRAPH_PASSWORD = os.environ.get("MEMGRAPH_PASSWORD", "")
+
 # ── Browser settings ─────────────────────────────────────────────────────────
 BROWSER         = os.environ.get("BROWSER", "chromium")
 HEADLESS        = os.environ.get("HEADLESS", "false").lower() == "true"
