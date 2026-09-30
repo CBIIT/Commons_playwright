@@ -76,9 +76,49 @@ def click_and_wait(page: Page, xpath: str):
     page.wait_for_load_state("networkidle", timeout=_NETWORK_IDLE_TIMEOUT)
 
 
+def _scroll_virtual_list_to_reveal(page: Page, xpath: str, max_attempts: int = 20) -> bool:
+    """
+    For virtualized filter lists (e.g. PHS Accession), scroll the list container
+    incrementally until the target element appears in the DOM.
+    Returns True if the element was found, False if not found after scrolling.
+    """
+    # Find the scrollable container that holds filter checkboxes
+    # These are divs with overflow scroll/auto that contain the checkbox items
+    script = """
+    (xpath) => {
+        const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
+        const el = result.singleNodeValue;
+        if (el) return { found: true };
+        // Not in DOM — find and scroll the virtualized list containers
+        const containers = Array.from(document.querySelectorAll('div')).filter(d => {
+            const style = window.getComputedStyle(d);
+            return (style.overflow === 'auto' || style.overflow === 'scroll' ||
+                    style.overflowY === 'auto' || style.overflowY === 'scroll') &&
+                   d.scrollHeight > d.clientHeight + 10 &&
+                   d.clientHeight > 50 &&
+                   d.querySelectorAll('input[type="checkbox"]').length > 0;
+        });
+        if (containers.length === 0) return { found: false, scrolled: false };
+        // Scroll all matching containers by one step
+        containers.forEach(c => { c.scrollTop += 200; });
+        return { found: false, scrolled: true, containers: containers.length };
+    }
+    """
+    for _ in range(max_attempts):
+        result = page.evaluate(script, xpath)
+        if result.get("found"):
+            return True
+        if not result.get("scrolled"):
+            break
+        page.wait_for_timeout(150)
+    return False
+
+
 def js_click(page: Page, xpath: str):
     """
     Click element using JavaScript — bypasses overlays and interceptors.
+    If the element is in a virtualized list (not in DOM initially), scrolls
+    the list container to reveal it before clicking.
     Replaces: clickElement() in Katalon (which used JavascriptExecutor).
 
     Args:
@@ -86,7 +126,13 @@ def js_click(page: Page, xpath: str):
         xpath: XPath string
     """
     locator = page.locator(f"xpath={xpath}")
-    locator.wait_for(state="attached", timeout=DEFAULT_TIMEOUT)
+    # Quick check if already in DOM
+    try:
+        locator.wait_for(state="attached", timeout=2000)
+    except Exception:
+        # Element not in DOM yet — try scrolling the virtualized list to reveal it
+        _scroll_virtual_list_to_reveal(page, xpath)
+        locator.wait_for(state="attached", timeout=DEFAULT_TIMEOUT)
     locator.evaluate("el => el.click()")
 
 
