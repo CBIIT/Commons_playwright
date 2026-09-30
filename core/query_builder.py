@@ -33,15 +33,30 @@ Testers never touch this file.
 
 FILTER_FIELD_MAP = {
     "CDS": {
-        "phs":          "s.phs_accession",
-        "sex":          "p.sex",
-        "gender":       "p.gender",
-        "race":         "p.race",
-        "ethnicity":    "p.ethnicity",
-        "file_type":    "f.file_type",
-        "strategy":     "f.experimental_strategy_and_data_subtypes",
-        "sample_type":  "samp.sample_type",
-        "tumor_status": "samp.sample_tumor_status",
+        # Study facet
+        "phs":               "s.phs_accession",
+        "study_data_types":  "s.study_data_types",
+        # Demographics facet
+        "sex":               "p.sex",
+        "gender":            "p.gender",
+        "race":              "p.race",
+        "ethnicity":         "p.ethnicity",
+        # Files facet
+        "file_type":         "f.file_type",
+        "strategy":          "f.experimental_strategy_and_data_subtypes",
+        # Samples facet
+        "sample_type":       "samp.sample_type",
+        "tumor_status":      "samp.sample_tumor_status",
+        # Diagnosis facet  (diagnosis node: [:of_participant]->(participant))
+        "primary_diagnosis": "diag.primary_diagnosis",
+        # Genomic / Sequencing facet  (genomic_info node: [:of_file]->(file))
+        "platform":          "gi.platform",
+        "instrument_model":  "gi.instrument_model",
+        "library_strategy":  "gi.library_strategy",
+        "library_source":    "gi.library_source",
+        "library_layout":    "gi.library_layout",
+        "library_selection": "gi.library_selection",
+        "reference_genome":  "gi.reference_genome_assembly",
     },
 }
 
@@ -54,6 +69,16 @@ _EXTRA_MATCH = {
     "CDS": {
         "f.":    "MATCH (f:file)-[:of_participant]->(p)",
         "samp.": "MATCH (samp:sample)-[:of_participant]->(p)",
+        "diag.": "MATCH (diag:diagnosis)-[:of_participant]->(p)",
+        "gi.":   "MATCH (gi:genomic_info)-[:of_file]->(f)",
+    }
+}
+
+# Some extra MATCH clauses depend on another node being in scope first.
+# e.g. gi requires f; if f is not in the template either, f's MATCH must also be injected.
+_EXTRA_MATCH_DEPS = {
+    "CDS": {
+        "gi.": "f.",   # gi-[:of_file]->(f) requires f to be bound
     }
 }
 
@@ -183,12 +208,10 @@ def _build_clauses(program: str, tab_name: str, filters: dict):
 
     field_map  = FILTER_FIELD_MAP.get(program, {})
     extra_map  = _EXTRA_MATCH.get(program, {})
-
-    # Determine which base nodes are already in this tab's template
-    # so we don't inject a duplicate MATCH
+    dep_map    = _EXTRA_MATCH_DEPS.get(program, {})
     template   = CYPHER_TEMPLATES[program][tab_name]
     conditions = []
-    extra_matches_needed = set()
+    extra_matches_needed = set()   # set of alias prefixes that need injection
 
     for key, values in filters.items():
         if key not in field_map:
@@ -205,7 +228,14 @@ def _build_clauses(program: str, tab_name: str, filters: dict):
         for alias_prefix, match_clause in extra_map.items():
             standalone = "\nMATCH " + match_clause.split("MATCH ", 1)[1]
             if field.startswith(alias_prefix) and standalone not in template:
-                extra_matches_needed.add(match_clause)
+                extra_matches_needed.add(alias_prefix)
+                # Resolve dependency: if this node depends on another, inject that too
+                dep_prefix = dep_map.get(alias_prefix)
+                if dep_prefix and dep_prefix in extra_map:
+                    dep_clause  = extra_map[dep_prefix]
+                    dep_standalone = "\nMATCH " + dep_clause.split("MATCH ", 1)[1]
+                    if dep_standalone not in template:
+                        extra_matches_needed.add(dep_prefix)
 
         # Build condition — single value uses = or CONTAINS, multiple uses IN
         if field in _CONTAINS_FIELDS:
@@ -217,6 +247,10 @@ def _build_clauses(program: str, tab_name: str, filters: dict):
             vals = ", ".join(f"'{v}'" for v in values)
             conditions.append(f"{field} IN [{vals}]")
 
-    extra_match_str = "\n".join(sorted(extra_matches_needed))
+    # Order MATCHes so dependencies come before dependents
+    # f. and samp. and diag. bind to p; gi. binds to f — so f. must precede gi.
+    _ORDER = ["f.", "samp.", "diag.", "gi."]
+    ordered = sorted(extra_matches_needed, key=lambda p: _ORDER.index(p) if p in _ORDER else 99)
+    extra_match_str = "\n".join(extra_map[pfx] for pfx in ordered)
     where_str = "WHERE " + "\n  AND ".join(conditions) if conditions else ""
     return extra_match_str, where_str
