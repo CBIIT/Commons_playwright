@@ -70,19 +70,20 @@ def run_test_from_excel(testcase_excel: str):
     sheet_names = wb.sheetnames
 
     # ── Read Steps sheet ──────────────────────────────────────────────────────
-    # Row 1 = config values in cols B-E: Program | Input Excel | Max Pages | Max Rows
-    # Row 2+ = steps: # | Program | Input Excel | Max Pages | Max Rows | Action | Page | Object Name | Params | Filter | Notes
+    # Row 1 = column headers (ignored at runtime)
+    # Row 2 = config values: # | Program | Input Excel | Max Pages | Max Rows | (rest empty)
+    # Row 3+ = steps: # | (empty) | (empty) | (empty) | (empty) | Action | Page | Object Name | Params | Filter | Notes
     ws = wb["Steps"]
     rows = list(ws.iter_rows(min_row=1, values_only=True))
 
-    cfg_row   = rows[0]
+    cfg_row   = rows[1]   # row 2 in the Excel (index 1)
     program   = str(cfg_row[1]).strip()  if cfg_row[1] else ""
     input_excel = str(cfg_row[2]).strip() if cfg_row[2] else ""
     max_pages = int(cfg_row[3]) if cfg_row[3] else None
     max_rows  = int(cfg_row[4]) if cfg_row[4] else None
 
     steps = []
-    for row in rows[1:]:
+    for row in rows[2:]:
         if not row[5]:
             continue
         steps.append({

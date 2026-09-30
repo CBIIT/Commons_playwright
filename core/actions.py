@@ -18,7 +18,7 @@ _NETWORK_IDLE_TIMEOUT = 15000  # ms
 def dismiss_popup(page: Page):
     """
     Dismiss the warning/continue popup that appears on every page load.
-    Clicks: //span[contains(text(),'Continue')]
+    Uses JS click to bypass the MuiDialog overlay that intercepts regular pointer events.
     Must be called FIRST before any navigation — mirrors the first line of every Katalon test.
 
     Args:
@@ -27,9 +27,12 @@ def dismiss_popup(page: Page):
     try:
         locator = page.locator(f"xpath={_POPUP_CONTINUE_XPATH}")
         locator.wait_for(state="visible", timeout=10000)
-        locator.click()
-        # Wait for popup overlay to disappear before continuing
-        locator.wait_for(state="hidden", timeout=10000)
+        # JS click bypasses the MuiDialog overlay that intercepts regular pointer events
+        locator.evaluate("el => el.click()")
+        # Wait for the dialog container to fully disappear before any subsequent click
+        page.locator("xpath=//div[contains(@class,'MuiDialog-container')]").wait_for(
+            state="hidden", timeout=10000
+        )
     except PlaywrightTimeoutError:
         # Popup not present on this page load — that is fine, continue
         pass
