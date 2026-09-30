@@ -259,6 +259,15 @@ def run_test_from_excel(testcase_excel: str):
         if browser and playwright:
             close_browser(playwright, browser)
 
+    # ── Write output Excel with UI + DB data ─────────────────────────────────
+    _write_output_excel(
+        testcase_excel   = testcase_excel,
+        program          = program,
+        filters          = collected_filters,
+        stat_counts      = stat_counts,
+        result           = result,
+    )
+
     status = "PASS" if result["passed"] else "FAIL"
     print(f"\n{'='*60}")
     print(f"[test_runner] Result: {status}")
@@ -280,7 +289,7 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
     Paginate UI result tab, query Memgraph with same filters, compare row counts.
 
     Returns:
-        dict: { passed, mismatches, ui_count, db_count }
+        dict: { passed, mismatches, ui_count, db_count, ui_rows, db_rows, headers }
     """
     from core.query_builder  import build_query
     from core.memgraph_reader import query_memgraph
@@ -291,7 +300,8 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
 
     if stat_value == 0:
         print(f"[test_runner]   Skipping '{tab_name}' — stat bar count is 0")
-        return {"passed": True, "mismatches": [], "ui_count": 0, "db_count": 0, "skipped": True}
+        return {"passed": True, "mismatches": [], "ui_count": 0, "db_count": 0,
+                "ui_rows": [], "db_rows": [], "headers": [], "skipped": True}
 
     # ── Collect UI rows ───────────────────────────────────────────────────────
     ui_result = collect_all_rows(
@@ -304,10 +314,9 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
         max_rows         = max_rows,
     )
     ui_rows   = ui_result["rows"]
+    headers   = ui_result.get("headers", [])
     truncated = ui_result.get("truncated", False)
     if truncated:
-        # Read the pagination "of X" total directly from the table's own pagination widget.
-        # This is the authoritative filtered count in the UI, independent of the stat bar.
         ui_count = _read_pagination_total(page) or stat_value
         print(f"[test_runner]   UI rows truncated — pagination total: {ui_count}")
     else:
@@ -322,15 +331,14 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
         print(f"[test_runner]   Memgraph rows returned: {db_count}")
     except Exception as e:
         print(f"[test_runner]   Memgraph query failed: {e}")
-        return {"passed": False, "mismatches": [str(e)], "ui_count": ui_count, "db_count": 0}
+        return {"passed": False, "mismatches": [str(e)], "ui_count": ui_count, "db_count": 0,
+                "ui_rows": ui_rows, "db_rows": [], "headers": headers}
 
     # ── Compare row counts ────────────────────────────────────────────────────
     count_match = (ui_count == db_count)
     mismatches  = []
     if not count_match:
-        mismatches.append(
-            f"Row count mismatch: UI={ui_count} Memgraph={db_count}"
-        )
+        mismatches.append(f"Row count mismatch: UI={ui_count} Memgraph={db_count}")
 
     passed = count_match
     status = "PASS" if passed else "FAIL"
@@ -340,10 +348,14 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
             print(f"[test_runner]     MISMATCH: {m}")
 
     return {
-        "passed":    passed,
+        "passed":     passed,
         "mismatches": mismatches,
-        "ui_count":  ui_count,
-        "db_count":  db_count,
+        "ui_count":   ui_count,
+        "db_count":   db_count,
+        "ui_rows":    ui_rows,
+        "db_rows":    db_rows,
+        "headers":    headers,
+        "truncated":  truncated,
     }
 
 
@@ -428,6 +440,118 @@ def _login(page, email: str, password: str):
     page.locator("xpath=//input[@type='password']").first.fill(password)
     page.keyboard.press("Enter")
     page.wait_for_load_state("networkidle")
+
+
+def _write_output_excel(testcase_excel: str, program: str, filters: dict,
+                         stat_counts: dict, result: dict):
+    """
+    Write a per-TC output Excel file to Reports/ with:
+      - Summary sheet  : TC info, filters, stat bar counts, per-tab pass/fail
+      - UI_<Tab> sheet : rows collected from the browser (up to max_pages)
+      - DB_<Tab> sheet : rows returned from Memgraph
+    """
+    import openpyxl
+    from openpyxl.styles import Font, PatternFill, Alignment
+    from datetime import datetime
+    from pathlib import Path
+
+    RED   = PatternFill("solid", fgColor="FFCCCC")
+    GREEN = PatternFill("solid", fgColor="CCFFCC")
+    BOLD  = Font(bold=True)
+
+    reports_dir = Path(__file__).parent.parent / "Reports"
+    reports_dir.mkdir(exist_ok=True)
+    tc_stem  = Path(testcase_excel).stem
+    ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
+    out_path = reports_dir / f"{tc_stem}_{ts}.xlsx"
+
+    wb = openpyxl.Workbook()
+    wb.remove(wb.active)   # remove default sheet
+
+    # ── Summary sheet ─────────────────────────────────────────────────────────
+    ws_sum = wb.create_sheet("Summary")
+    overall_pass = result.get("passed", False)
+
+    header_pairs = [
+        ("TC",       tc_stem),
+        ("Program",  program),
+        ("Status",   "PASS" if overall_pass else "FAIL"),
+        ("Run at",   datetime.now().strftime("%Y-%m-%d %H:%M:%S")),
+        ("", ""),
+        ("Filters applied", ""),
+    ]
+    for label, value in header_pairs:
+        row = ws_sum.append([label, value]) or ws_sum.max_row
+    for k, vals in filters.items():
+        ws_sum.append(["", f"  {k} = {', '.join(vals)}"])
+
+    ws_sum.append(["", ""])
+    ws_sum.append(["Stat Bar Counts", ""])
+    for k, v in stat_counts.items():
+        ws_sum.append(["", f"  {k}: {v}"])
+
+    ws_sum.append(["", ""])
+    ws_sum.append(["Tab Results", "UI Count", "DB Count", "Status"])
+    for tab_name, tab_res in result.get("tabs", {}).items():
+        status_str = "PASS" if tab_res.get("passed") else "FAIL"
+        r = ws_sum.max_row + 1
+        ws_sum.append([tab_name, tab_res.get("ui_count", ""), tab_res.get("db_count", ""), status_str])
+        fill = GREEN if tab_res.get("passed") else RED
+        for col in range(1, 5):
+            ws_sum.cell(r, col).fill = fill
+        for mm in tab_res.get("mismatches", []):
+            ws_sum.append(["", "", "", mm])
+
+    # Bold first column
+    for row in ws_sum.iter_rows():
+        row[0].font = BOLD
+    ws_sum.column_dimensions["A"].width = 28
+    ws_sum.column_dimensions["B"].width = 20
+
+    # ── Data sheets per tab ───────────────────────────────────────────────────
+    for tab_name, tab_res in result.get("tabs", {}).items():
+        if tab_res.get("skipped"):
+            continue
+        short = tab_name.replace("Tab", "")   # "Participants", "Samples", "Files"
+
+        ui_rows  = tab_res.get("ui_rows", [])
+        db_rows  = tab_res.get("db_rows", [])
+        headers  = tab_res.get("headers", [])
+        truncated = tab_res.get("truncated", False)
+
+        # UI sheet
+        ws_ui = wb.create_sheet(f"UI_{short}")
+        note = f"(first {len(ui_rows)} of {tab_res.get('ui_count','?')} — truncated at max_pages)" if truncated else ""
+        if note:
+            ws_ui.append([note])
+            ws_ui.cell(ws_ui.max_row, 1).font = Font(italic=True, color="888888")
+        if ui_rows:
+            if headers:
+                ws_ui.append(headers)
+                for cell in ws_ui[ws_ui.max_row]:
+                    cell.font = BOLD
+                    cell.fill = PatternFill("solid", fgColor="D9E1F2")
+            for row in ui_rows:
+                # ui_rows are lists when headers are separate, dicts otherwise
+                ws_ui.append(list(row.values()) if isinstance(row, dict) else list(row))
+        else:
+            ws_ui.append(["(no rows collected)"])
+
+        # DB sheet
+        ws_db = wb.create_sheet(f"DB_{short}")
+        if db_rows:
+            db_cols = list(db_rows[0].keys())
+            ws_db.append(db_cols)
+            for cell in ws_db[1]:
+                cell.font = BOLD
+                cell.fill = PatternFill("solid", fgColor="E2EFDA")
+            for row in db_rows:
+                ws_db.append([row.get(c, "") for c in db_cols])
+        else:
+            ws_db.append(["(no rows returned)"])
+
+    wb.save(out_path)
+    print(f"[test_runner] Output Excel: {out_path}")
 
 
 # Maps facet folder name → Object Repo key for the section expander button.
