@@ -123,7 +123,7 @@ def run_test_from_excel(testcase_excel: str):
     playwright, browser, page = None, None, None
     stat_counts  = {}
     collected_filters: dict = {}   # {key: [value, ...]} — accumulated from Filter column
-    result = {"passed": True, "tabs": {}, "errors": []}
+    result = {"passed": True, "tabs": {}, "errors": [], "stat_bar": []}
 
     try:
         playwright, browser, page = launch_browser()
@@ -212,7 +212,7 @@ def run_test_from_excel(testcase_excel: str):
 
                 # Compare with Memgraph StatBar query if filters collected
                 if collected_filters:
-                    _compare_stat_bar(program, collected_filters, stat_counts, custom_queries)
+                    result["stat_bar"] = _compare_stat_bar(program, collected_filters, stat_counts, custom_queries)
 
             elif action == "multi_function":
                 tab_name = params
@@ -359,22 +359,25 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
     }
 
 
-def _compare_stat_bar(program: str, filters: dict, ui_counts: dict, custom_queries: dict):
-    """Query Memgraph StatBar and compare counts against UI stat bar."""
+def _compare_stat_bar(program: str, filters: dict, ui_counts: dict, custom_queries: dict) -> list[dict]:
+    """
+    Query Memgraph StatBar and compare counts against UI stat bar.
+    Returns list of comparison rows: [{metric, ui, db, match}]
+    """
     from core.query_builder  import build_query
     from core.memgraph_reader import query_memgraph
 
+    comparison = []
     try:
         custom = custom_queries.get("StatBar")
         cypher = build_query(program, "StatBar", filters, custom_query=custom)
         rows   = query_memgraph(cypher)
         if not rows:
             print("[test_runner]   StatBar: no rows returned from Memgraph")
-            return
+            return comparison
         db = rows[0]
         print(f"[test_runner]   Memgraph stat bar: {dict(db)}")
 
-        # Compare each count
         mapping = {
             "Studies":      "studies",
             "Participants": "participants",
@@ -385,10 +388,12 @@ def _compare_stat_bar(program: str, filters: dict, ui_counts: dict, custom_queri
             db_val = db.get(db_key)
             ui_val = ui_counts.get(ui_key)
             if db_val is not None and ui_val is not None:
-                match = "✓" if db_val == ui_val else "✗ MISMATCH"
-                print(f"[test_runner]   {db_key}: UI={ui_val} DB={db_val} {match}")
+                matched = (db_val == ui_val)
+                print(f"[test_runner]   {db_key}: UI={ui_val} DB={db_val} {'✓' if matched else '✗ MISMATCH'}")
+                comparison.append({"metric": db_key, "ui": ui_val, "db": db_val, "match": matched})
     except Exception as e:
         print(f"[test_runner]   StatBar Memgraph query failed: {e}")
+    return comparison
 
 
 def _read_pagination_total(page) -> int:
@@ -549,6 +554,34 @@ def _write_output_excel(testcase_excel: str, program: str, filters: dict,
                 ws_db.append([row.get(c, "") for c in db_cols])
         else:
             ws_db.append(["(no rows returned)"])
+
+    # ── StatBar comparison sheet ──────────────────────────────────────────────
+    stat_bar_rows = result.get("stat_bar", [])
+    if stat_bar_rows:
+        ws_sb = wb.create_sheet("StatBar")
+        header = ["Metric", "UI Value", "DB Value", "Match"]
+        ws_sb.append(header)
+        for cell in ws_sb[1]:
+            cell.font = BOLD
+            cell.fill = PatternFill("solid", fgColor="D9E1F2")
+        for sb in stat_bar_rows:
+            matched = sb.get("match", False)
+            ws_sb.append([sb["metric"], sb["ui"], sb["db"], "PASS" if matched else "MISMATCH"])
+            fill = GREEN if matched else RED
+            for col in range(1, 5):
+                ws_sb.cell(ws_sb.max_row, col).fill = fill
+        ws_sb.column_dimensions["A"].width = 16
+        ws_sb.column_dimensions["B"].width = 14
+        ws_sb.column_dimensions["C"].width = 14
+        ws_sb.column_dimensions["D"].width = 12
+
+        # Flag stat bar mismatches on Summary sheet
+        if any(not sb.get("match") for sb in stat_bar_rows):
+            ws_sum.append(["", ""])
+            r = ws_sum.max_row + 1
+            ws_sum.append(["StatBar", "MISMATCH — see StatBar sheet"])
+            for col in range(1, 3):
+                ws_sum.cell(r, col).fill = RED
 
     wb.save(out_path)
     print(f"[test_runner] Output Excel: {out_path}")
