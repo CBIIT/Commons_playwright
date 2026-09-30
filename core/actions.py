@@ -64,10 +64,15 @@ def click_and_wait(page: Page, xpath: str):
         page:  Playwright Page object
         xpath: XPath string from find_test_object()
     """
-    # Re-locate fresh each time — React re-renders detach stale references
-    page.locator(f"xpath={xpath}").first.wait_for(state="visible", timeout=DEFAULT_TIMEOUT)
-    page.locator(f"xpath={xpath}").first.click()
-    # Wait for React to re-render after data loads
+    # Wait for network to settle first so React has finished re-rendering
+    page.wait_for_load_state("networkidle", timeout=_NETWORK_IDLE_TIMEOUT)
+    # Re-locate fresh — stale handles from before networkidle are discarded
+    loc = page.locator(f"xpath={xpath}").first
+    loc.wait_for(state="visible", timeout=DEFAULT_TIMEOUT)
+    # JS scroll avoids "not attached" errors when React re-renders mid-action
+    loc.evaluate("el => el.scrollIntoView({block: 'center'})")
+    loc.click()
+    # Wait for React to re-render after the click
     page.wait_for_load_state("networkidle", timeout=_NETWORK_IDLE_TIMEOUT)
 
 

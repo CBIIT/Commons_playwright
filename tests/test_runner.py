@@ -139,7 +139,12 @@ def run_test_from_excel(testcase_excel: str):
             def _xpath():
                 if not page_name or not obj_name:
                     raise ValueError(f"Step '{action}' needs Page + Object Name but one is empty.")
-                return find_test_object(f"{program}/{page_name}/{obj_name}")
+                # Strip leading page_name prefix from obj_name if present (avoids doubling)
+                # e.g. Page="Data_page", ObjName="Data_page/Filter/..." → "Filter/..."
+                effective_obj = obj_name
+                if effective_obj.startswith(page_name + "/"):
+                    effective_obj = effective_obj[len(page_name) + 1:]
+                return find_test_object(f"{program}/{page_name}/{effective_obj}")
 
             print(f"[test_runner] {action}"
                   f"{f' | {page_name}/{obj_name}' if obj_name else ''}"
@@ -164,13 +169,16 @@ def run_test_from_excel(testcase_excel: str):
                 navigate_to(page, get_page_url(program, page_name))
 
             elif action == "click_element":
+                _ensure_facet_expanded(page, program, page_name, obj_name)
                 click_element(page, _xpath())
 
             elif action == "click_and_wait":
+                _ensure_facet_expanded(page, program, page_name, obj_name)
                 click_and_wait(page, _xpath())
 
             elif action == "js_click_and_wait":
                 from core.actions import js_click
+                _ensure_facet_expanded(page, program, page_name, obj_name)
                 js_click(page, _xpath())
                 page.wait_for_load_state("networkidle", timeout=15000)
 
@@ -420,6 +428,59 @@ def _login(page, email: str, password: str):
     page.locator("xpath=//input[@type='password']").first.fill(password)
     page.keyboard.press("Enter")
     page.wait_for_load_state("networkidle")
+
+
+# Maps facet folder name → Object Repo key for the section expander button.
+# If the expander element is not visible (section already open), this is a no-op.
+_FACET_EXPANDERS = {
+    "CDS": {
+        # Add more facet keys here as their expander XPaths are added to the Object Repo
+        "DemographicsFacet": "CDS/Data_page/Filter/DemographicsFacet/DemographicsFacet",
+    },
+}
+
+
+def _ensure_facet_expanded(page, program: str, page_name: str, obj_name: str):
+    """
+    If obj_name references a filter inside a collapsible facet section that is
+    currently collapsed, click the section header to expand it first.
+    Silently does nothing if the section is already open or the expander isn't configured.
+    """
+    from playwright.sync_api import TimeoutError as PWTimeout
+    expanders = _FACET_EXPANDERS.get(program, {})
+    for facet_key, expander_repo_key in expanders.items():
+        if facet_key not in obj_name:
+            continue
+        try:
+            expander_xpath = find_test_object(expander_repo_key)
+        except KeyError:
+            continue
+        # Check if any item INSIDE the facet is already visible; if so, it's expanded
+        # We probe this by checking whether the facet expander itself is in a closed state.
+        # CDS facet expanders are always visible (they're the section headers); the children
+        # (Gender-Ddn, etc.) are only visible when the section is open.
+        # So: try waiting briefly for the target element; if it's not visible, click expander.
+        try:
+            effective_obj = obj_name
+            if effective_obj.startswith(page_name + "/"):
+                effective_obj = effective_obj[len(page_name) + 1:]
+            target_xpath = find_test_object(f"{program}/{page_name}/{effective_obj}")
+            loc = page.locator(f"xpath={target_xpath}").first
+            loc.wait_for(state="visible", timeout=2000)
+            return  # already visible, no need to expand
+        except (PWTimeout, Exception):
+            pass
+        # Section is collapsed — click the expander
+        try:
+            exp_loc = page.locator(f"xpath={expander_xpath}").first
+            exp_loc.wait_for(state="visible", timeout=5000)
+            exp_loc.scroll_into_view_if_needed()
+            exp_loc.click()
+            page.wait_for_timeout(500)
+            print(f"[test_runner]   Auto-expanded facet: {facet_key}")
+        except Exception as e:
+            print(f"[test_runner]   Warning: could not expand facet '{facet_key}': {e}")
+        return
 
 
 def _verify_static(page, program: str, expected_texts: list) -> bool:
