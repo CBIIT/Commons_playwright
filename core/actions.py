@@ -29,9 +29,10 @@ def dismiss_popup(page: Page):
         locator.wait_for(state="visible", timeout=10000)
         # JS click bypasses the MuiDialog overlay that intercepts regular pointer events
         locator.evaluate("el => el.click()")
-        # Wait for the dialog container to fully disappear before any subsequent click
-        page.locator("xpath=//div[contains(@class,'MuiDialog-container')]").wait_for(
-            state="hidden", timeout=10000
+        # Wait for all MuiDialog containers to disappear before any subsequent click
+        page.wait_for_function(
+            "() => document.querySelectorAll('[class*=\"MuiDialog-container\"]').length === 0",
+            timeout=10000,
         )
     except PlaywrightTimeoutError:
         # Popup not present on this page load — that is fine, continue

@@ -286,7 +286,7 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
         return {"passed": True, "mismatches": [], "ui_count": 0, "db_count": 0, "skipped": True}
 
     # ── Collect UI rows ───────────────────────────────────────────────────────
-    ui_rows = collect_all_rows(
+    ui_result = collect_all_rows(
         page             = page,
         table_body_xpath = find_test_object(tab_def["table_body"]) + "//tbody//tr",
         next_btn_xpath   = find_test_object(tab_def["next_btn"]),
@@ -295,8 +295,16 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
         max_pages        = max_pages,
         max_rows         = max_rows,
     )
-    ui_count = len(ui_rows)
-    print(f"[test_runner]   UI rows collected: {ui_count}")
+    ui_rows   = ui_result["rows"]
+    truncated = ui_result.get("truncated", False)
+    if truncated:
+        # Read the pagination "of X" total directly from the table's own pagination widget.
+        # This is the authoritative filtered count in the UI, independent of the stat bar.
+        ui_count = _read_pagination_total(page) or stat_value
+        print(f"[test_runner]   UI rows truncated — pagination total: {ui_count}")
+    else:
+        ui_count = len(ui_rows)
+        print(f"[test_runner]   UI rows collected: {ui_count}")
 
     # ── Query Memgraph ────────────────────────────────────────────────────────
     try:
@@ -309,7 +317,6 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
         return {"passed": False, "mismatches": [str(e)], "ui_count": ui_count, "db_count": 0}
 
     # ── Compare row counts ────────────────────────────────────────────────────
-    # Primary check: counts must match
     count_match = (ui_count == db_count)
     mismatches  = []
     if not count_match:
@@ -362,6 +369,36 @@ def _compare_stat_bar(program: str, filters: dict, ui_counts: dict, custom_queri
                 print(f"[test_runner]   {db_key}: UI={ui_val} DB={db_val} {match}")
     except Exception as e:
         print(f"[test_runner]   StatBar Memgraph query failed: {e}")
+
+
+def _read_pagination_total(page) -> int:
+    """
+    Read the "of X" total from any pagination widget visible on the page.
+    Looks for text like '1-10 of 159' or 'Showing 1 to 10 of 159'.
+    Returns the total integer, or 0 if not found.
+    """
+    import re
+    try:
+        # Generic MUI / common pagination patterns
+        locators = [
+            "xpath=//*[contains(@class,'pagination') or contains(@class,'Pagination')]"
+            "[contains(text(),' of ') or contains(text(),'of ')]",
+            "xpath=//p[contains(text(),' of ')]",
+            "xpath=//span[contains(text(),' of ')]",
+        ]
+        for xpath in locators:
+            try:
+                el = page.locator(xpath).first
+                if el.is_visible():
+                    text = el.inner_text().strip()
+                    m = re.search(r'of\s+([\d,]+)', text, re.IGNORECASE)
+                    if m:
+                        return int(m.group(1).replace(",", ""))
+            except Exception:
+                continue
+    except Exception:
+        pass
+    return 0
 
 
 def _tab_to_stat_key(tab_name: str) -> str:

@@ -91,6 +91,7 @@ ORDER BY p.participant_id ASC
 MATCH (samp:sample)-[:of_participant]->(p:participant)-[:of_study]->(s:study)
 {extra_match}
 {where}
+WITH DISTINCT samp, p, s
 RETURN
   s.study_name                                          AS study_name,
   s.phs_accession                                       AS accession,
@@ -104,6 +105,7 @@ ORDER BY samp.sample_id ASC
 MATCH (f:file)-[:of_participant]->(p:participant)-[:of_study]->(s:study)
 {extra_match}
 {where}
+WITH DISTINCT f, p, s
 OPTIONAL MATCH (f)-[:from_sample]->(samp:sample)
 RETURN
   s.study_name                              AS study_name,
@@ -197,9 +199,12 @@ def _build_clauses(program: str, tab_name: str, filters: dict):
             )
         field = field_map[key]
 
-        # Check if this field's node alias needs an extra MATCH injected
+        # Check if this field's node alias needs an extra MATCH injected.
+        # Use "\nMATCH " prefix so "OPTIONAL MATCH (f:..." in StatBar does NOT
+        # falsely prevent injection (substring "MATCH (f:" exists in OPTIONAL MATCH).
         for alias_prefix, match_clause in extra_map.items():
-            if field.startswith(alias_prefix) and match_clause not in template:
+            standalone = "\nMATCH " + match_clause.split("MATCH ", 1)[1]
+            if field.startswith(alias_prefix) and standalone not in template:
                 extra_matches_needed.add(match_clause)
 
         # Build condition — single value uses = or CONTAINS, multiple uses IN

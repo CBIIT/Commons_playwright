@@ -191,14 +191,17 @@ _READERS = {
 }
 
 
-def read_stat_bar(page: Page, program: str) -> dict:
+def read_stat_bar(page: Page, program: str, retries: int = 3, retry_delay_ms: int = 2000) -> dict:
     """
     Dispatcher — calls the correct read_stat_bar_* for the given program.
-    Replaces: the if/else program switch in TestRunner.groovy.
+    Retries up to `retries` times with a delay, waiting for counts to stabilise
+    after a filter click (React may update the table before updating the stat bar).
 
     Args:
-        page:    Playwright Page object
-        program: Program name e.g. 'CDS', 'CCDI', 'Canine'
+        page:           Playwright Page object
+        program:        Program name e.g. 'CDS', 'CCDI', 'Canine'
+        retries:        Max number of attempts (default 3)
+        retry_delay_ms: Delay between retries in ms (default 2000)
 
     Returns:
         dict: Stat bar counts for that program
@@ -212,7 +215,18 @@ def read_stat_bar(page: Page, program: str) -> dict:
             f"No stat bar reader for program '{program}'. "
             f"Supported: {list(_READERS.keys())}"
         )
-    counts = reader(page)
+
+    prev_counts = None
+    for attempt in range(retries):
+        page.wait_for_load_state("networkidle", timeout=15000)
+        counts = reader(page)
+        if counts == prev_counts:
+            # Counts haven't changed — they have stabilised
+            break
+        prev_counts = counts
+        if attempt < retries - 1:
+            page.wait_for_timeout(retry_delay_ms)
+
     print(f"[stat_bar] {program} counts: {counts}")
     return counts
 
