@@ -78,10 +78,30 @@ def get_current_page_rows(page: Page, table_body_xpath: str) -> list:
         list: List of row lists e.g. [['phs001234', '100', '50'], ...]
     """
     rows = []
-    row_elements = page.locator(f"xpath={table_body_xpath}").all()
-    for row_el in row_elements:
-        cells = row_el.locator("xpath=.//td").all()
-        row_data = [cell.inner_text().strip() for cell in cells]
+    loc = page.locator(f"xpath={table_body_xpath}")
+    # Wait for at least one row to be visible (not just attached) before reading
+    try:
+        loc.first.wait_for(state="visible", timeout=15000)
+    except Exception:
+        return rows
+    # Small settle wait so React finishes rendering all rows on the current page
+    page.wait_for_timeout(500)
+    row_count = loc.count()
+    for i in range(row_count):
+        # Re-locate each row by index to avoid stale handles after React re-renders
+        row_el = loc.nth(i)
+        try:
+            row_el.wait_for(state="visible", timeout=5000)
+        except Exception:
+            continue
+        cell_count = row_el.locator("xpath=.//td").count()
+        row_data = []
+        for j in range(cell_count):
+            try:
+                text = row_el.locator("xpath=.//td").nth(j).inner_text(timeout=10000).strip()
+            except Exception:
+                text = ""
+            row_data.append(text)
         if any(row_data):  # skip completely empty rows
             rows.append(row_data)
     return rows
@@ -209,6 +229,12 @@ def collect_all_rows(page: Page,
     while True:
         page_num += 1
 
+        # Wait for the table to settle before reading
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
+
         # Collect rows from current page
         page_rows = get_current_page_rows(page, table_body_xpath)
         all_rows.extend(page_rows)
@@ -234,6 +260,12 @@ def collect_all_rows(page: Page,
         if not click_next_page(page, next_btn_xpath):
             print(f"[table_reader] Last page reached.")
             break
+
+        # Wait for page to reload after pagination click
+        try:
+            page.wait_for_load_state("networkidle", timeout=15000)
+        except Exception:
+            pass
 
     print(f"[table_reader] Done — {len(all_rows)} rows across {page_num} pages"
           f"{' (TRUNCATED)' if truncated else ''}")

@@ -17,6 +17,7 @@ import os
 import sys
 import time
 import traceback
+from concurrent.futures import ThreadPoolExecutor, as_completed
 from datetime import datetime
 from pathlib import Path
 
@@ -37,7 +38,36 @@ def find_tc_files(tc_dir: str, name_filter: str = "", limit: int = 0) -> list[st
     return [str(f) for f in files]
 
 
-def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False, limit: int = 0) -> list[dict]:
+def _run_one(tc_path: str, index: int, total: int) -> dict:
+    tc_name = Path(tc_path).stem
+    print(f"\n[run_suite] [{index}/{total}] {tc_name}")
+    t0 = time.time()
+    try:
+        result = run_test_from_excel(tc_path)
+        elapsed = round(time.time() - t0, 1)
+        status = "PASS" if result["passed"] else "FAIL"
+        return {
+            "tc":      tc_name,
+            "status":  status,
+            "elapsed": elapsed,
+            "tabs":    result.get("tabs", {}),
+            "errors":  result.get("errors", []),
+        }
+    except Exception as e:
+        elapsed = round(time.time() - t0, 1)
+        tb = traceback.format_exc()
+        print(f"[run_suite] ERROR in {tc_name}:\n{tb}")
+        return {
+            "tc":      tc_name,
+            "status":  "ERROR",
+            "elapsed": elapsed,
+            "tabs":    {},
+            "errors":  [str(e)],
+        }
+
+
+def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False,
+              limit: int = 0, workers: int = 1) -> list[dict]:
     tc_files = find_tc_files(tc_dir, name_filter, limit)
     if not tc_files:
         filter_note = f" matching '{name_filter}'" if name_filter else ""
@@ -45,50 +75,34 @@ def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False, limit
         return []
 
     print(f"\n{'='*70}")
-    print(f"[run_suite] Suite: {len(tc_files)} test case(s)")
+    print(f"[run_suite] Suite: {len(tc_files)} test case(s)  |  workers={workers}")
     if name_filter:
         print(f"[run_suite] Filter: '{name_filter}'")
     print(f"{'='*70}\n")
 
-    results = []
-    passed = 0
-    failed = 0
-    errors = 0
+    results_map = {}  # index → result, to preserve order
 
-    for i, tc_path in enumerate(tc_files, 1):
-        tc_name = Path(tc_path).stem
-        print(f"\n[run_suite] [{i}/{len(tc_files)}] {tc_name}")
-        t0 = time.time()
-        try:
-            result = run_test_from_excel(tc_path)
-            elapsed = round(time.time() - t0, 1)
-            status = "PASS" if result["passed"] else "FAIL"
-            if result["passed"]:
-                passed += 1
-            else:
-                failed += 1
-            results.append({
-                "tc":      tc_name,
-                "status":  status,
-                "elapsed": elapsed,
-                "tabs":    result.get("tabs", {}),
-                "errors":  result.get("errors", []),
-            })
-        except Exception as e:
-            elapsed = round(time.time() - t0, 1)
-            errors += 1
-            tb = traceback.format_exc()
-            print(f"[run_suite] ERROR in {tc_name}:\n{tb}")
-            results.append({
-                "tc":      tc_name,
-                "status":  "ERROR",
-                "elapsed": elapsed,
-                "tabs":    {},
-                "errors":  [str(e)],
-            })
-            if fail_fast:
+    if workers <= 1:
+        for i, tc_path in enumerate(tc_files, 1):
+            r = _run_one(tc_path, i, len(tc_files))
+            results_map[i] = r
+            if fail_fast and r["status"] != "PASS":
                 print("[run_suite] --fail-fast: stopping after first failure.")
                 break
+    else:
+        futures = {}
+        with ThreadPoolExecutor(max_workers=workers) as executor:
+            for i, tc_path in enumerate(tc_files, 1):
+                f = executor.submit(_run_one, tc_path, i, len(tc_files))
+                futures[f] = i
+            for f in as_completed(futures):
+                i = futures[f]
+                results_map[i] = f.result()
+
+    results = [results_map[i] for i in sorted(results_map)]
+    passed = sum(1 for r in results if r["status"] == "PASS")
+    failed = sum(1 for r in results if r["status"] == "FAIL")
+    errors = sum(1 for r in results if r["status"] == "ERROR")
 
     _print_summary(results, passed, failed, errors)
     _write_report(results)
@@ -148,10 +162,12 @@ if __name__ == "__main__":
     parser.add_argument("--filter",    default="",          help="Substring filter on TC file names")
     parser.add_argument("--fail-fast", action="store_true", help="Stop after first failure")
     parser.add_argument("--limit",     type=int, default=0, help="Max number of TCs to run (0 = all)")
+    parser.add_argument("--workers",   type=int, default=1, help="Parallel browser workers (default 1)")
     args = parser.parse_args()
 
     tc_dir = args.dir
     if not os.path.isabs(tc_dir):
         tc_dir = str(Path(__file__).parent.parent / tc_dir)
 
-    run_suite(tc_dir=tc_dir, name_filter=args.filter, fail_fast=args.fail_fast, limit=args.limit)
+    run_suite(tc_dir=tc_dir, name_filter=args.filter, fail_fast=args.fail_fast,
+              limit=args.limit, workers=args.workers)
