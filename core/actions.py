@@ -76,10 +76,12 @@ def click_and_wait(page: Page, xpath: str):
     page.wait_for_load_state("networkidle", timeout=_NETWORK_IDLE_TIMEOUT)
 
 
-def _scroll_virtual_list_to_reveal(page: Page, xpath: str, max_attempts: int = 30) -> bool:
+def _scroll_virtual_list_to_reveal(page: Page, xpath: str, max_attempts: int = 50) -> bool:
     """
-    For virtualized filter lists, scroll all scrollable containers incrementally
+    For virtualized filter lists, scroll the correct list container incrementally
     until the target element appears in the DOM.
+    Uses sibling-detection: finds a rendered sibling checkbox to locate the scroll
+    container, then scrolls only that container rather than all divs.
     Returns True if the element was found, False if not found after scrolling.
     """
     script = """
@@ -87,26 +89,62 @@ def _scroll_virtual_list_to_reveal(page: Page, xpath: str, max_attempts: int = 3
         const result = document.evaluate(xpath, document, null, XPathResult.FIRST_ORDERED_NODE_TYPE, null);
         if (result.singleNodeValue) return { found: true };
 
-        // Find all scrollable divs — check both computed style and raw scrollability
-        const scrolled = [];
+        // Extract the ID prefix from the xpath to find a rendered sibling.
+        // e.g. //*[@id="checkbox_PRIMARY DIAGNOSIS_Glioma"] → prefix = "checkbox_PRIMARY DIAGNOSIS"
+        const idMatch = xpath.match(/id="([^"]+)"/);
+        let container = null;
+        if (idMatch) {
+            const fullId = idMatch[1];
+            // Build prefix: everything up to and including the second underscore group
+            const parts = fullId.split('_');
+            // Try progressively shorter prefixes to find any sibling
+            for (let pLen = parts.length - 1; pLen >= 2; pLen--) {
+                const prefix = parts.slice(0, pLen).join('_');
+                const sibling = document.querySelector('[id^="' + prefix + '_"]');
+                if (sibling) {
+                    // Walk up to find the scrollable ancestor
+                    let el = sibling.parentElement;
+                    while (el && el !== document.body) {
+                        const style = window.getComputedStyle(el);
+                        const ov = style.overflow + style.overflowY;
+                        if ((ov.includes('auto') || ov.includes('scroll')) &&
+                            el.scrollHeight > el.clientHeight + 5) {
+                            container = el;
+                            break;
+                        }
+                        el = el.parentElement;
+                    }
+                    if (container) break;
+                }
+            }
+        }
+
+        if (container) {
+            container.scrollTop += 300;
+            return { found: false, scrolled: true, method: 'sibling' };
+        }
+
+        // Fallback: scroll all scrollable divs (catches first attempt before any
+        // sibling is rendered)
+        let scrolled = 0;
         Array.from(document.querySelectorAll('div')).forEach(d => {
-            if (d.scrollHeight > d.clientHeight + 5 && d.clientHeight > 30) {
+            if (d.scrollHeight > d.clientHeight + 5 && d.clientHeight > 30 && d.clientHeight < 600) {
                 const style = window.getComputedStyle(d);
                 const ov = style.overflow + style.overflowY;
                 if (ov.includes('auto') || ov.includes('scroll') || d.scrollTop > 0) {
-                    d.scrollTop += 250;
-                    scrolled.push(d.scrollTop);
+                    d.scrollTop += 300;
+                    scrolled++;
                 }
             }
         });
-        return { found: false, scrolled: scrolled.length > 0 };
+        return { found: false, scrolled: scrolled > 0, method: 'fallback' };
     }
     """
     for _ in range(max_attempts):
         result = page.evaluate(script, xpath)
         if result.get("found"):
             return True
-        page.wait_for_timeout(120)
+        page.wait_for_timeout(200)
     return False
 
 
@@ -122,9 +160,9 @@ def js_click(page: Page, xpath: str):
         xpath: XPath string
     """
     locator = page.locator(f"xpath={xpath}")
-    # Quick check if already in DOM
+    # Wait up to 5s for element to appear before resorting to virtual-list scrolling
     try:
-        locator.wait_for(state="attached", timeout=2000)
+        locator.wait_for(state="attached", timeout=5000)
     except Exception:
         # Element not in DOM yet — try scrolling the virtualized list to reveal it
         _scroll_virtual_list_to_reveal(page, xpath)

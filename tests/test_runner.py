@@ -92,7 +92,7 @@ def run_test_from_excel(testcase_excel: str):
             "object_name": str(row[7]).strip() if row[7] else "",
             "params":      str(row[8]).strip() if row[8] else "",
             "filter":      str(row[9]).strip() if row[9] else "",
-            "notes":       str(row[10]).strip() if row[10] else "",
+            "notes":       str(row[10]).strip() if len(row) > 10 and row[10] else "",
         })
 
     # ── Read Queries sheet if present (one-off Cypher override) ──────────────

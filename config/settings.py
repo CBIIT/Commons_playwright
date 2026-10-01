@@ -176,5 +176,5 @@ MEMGRAPH_PASSWORD = os.environ.get("MEMGRAPH_PASSWORD", "")
 
 # ── Browser settings ─────────────────────────────────────────────────────────
 BROWSER         = os.environ.get("BROWSER", "chromium")
-HEADLESS        = os.environ.get("HEADLESS", "false").lower() == "true"
+HEADLESS        = os.environ.get("HEADLESS", "true").lower() == "true"
 DEFAULT_TIMEOUT = int(os.environ.get("DEFAULT_TIMEOUT", "30000"))
