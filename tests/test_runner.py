@@ -58,13 +58,16 @@ PROGRAM_NAV_BTN = {
 }
 
 
-def run_test_from_excel(testcase_excel: str):
+def run_test_from_excel(testcase_excel: str, run_dir: str = None):
     """
     Read a TC Excel (Steps sheet) and execute every step.
     Main entry point for single TC runs.
 
     Args:
         testcase_excel: path to TC Excel e.g. TestCases/TC01_CDS_phs001437.xlsx
+        run_dir:        optional folder to write the output Excel into (e.g. a
+                        timestamped Reports/run_YYYYMMDD_HHMMSS/ subfolder).
+                        Defaults to Reports/ when None.
     """
     wb = openpyxl.load_workbook(testcase_excel, data_only=True)
     sheet_names = wb.sheetnames
@@ -266,6 +269,7 @@ def run_test_from_excel(testcase_excel: str):
         filters          = collected_filters,
         stat_counts      = stat_counts,
         result           = result,
+        run_dir          = run_dir,
     )
 
     status = "PASS" if result["passed"] else "FAIL"
@@ -461,9 +465,9 @@ def _login(page, email: str, password: str):
 
 
 def _write_output_excel(testcase_excel: str, program: str, filters: dict,
-                         stat_counts: dict, result: dict):
+                         stat_counts: dict, result: dict, run_dir: str = None):
     """
-    Write a per-TC output Excel file to Reports/ with:
+    Write a per-TC output Excel file to run_dir (or Reports/ if None) with:
       - Summary sheet  : TC info, filters, stat bar counts, per-tab pass/fail
       - UI_<Tab> sheet : rows collected from the browser (up to max_pages)
       - DB_<Tab> sheet : rows returned from Memgraph
@@ -477,8 +481,11 @@ def _write_output_excel(testcase_excel: str, program: str, filters: dict,
     GREEN = PatternFill("solid", fgColor="CCFFCC")
     BOLD  = Font(bold=True)
 
-    reports_dir = Path(__file__).parent.parent / "Reports"
-    reports_dir.mkdir(exist_ok=True)
+    if run_dir:
+        reports_dir = Path(run_dir)
+    else:
+        reports_dir = Path(__file__).parent.parent / "Reports"
+    reports_dir.mkdir(parents=True, exist_ok=True)
     tc_stem  = Path(testcase_excel).stem
     ts       = datetime.now().strftime("%Y%m%d_%H%M%S")
     out_path = reports_dir / f"{tc_stem}_{ts}.xlsx"

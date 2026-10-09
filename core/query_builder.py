@@ -348,8 +348,16 @@ def build_query(program: str, tab_name: str, filters: dict, custom_query: str = 
     # Build UNION branch for study-level files (no participant link) — FilesTab only.
     # Some files are attached directly to a study (e.g. reference BED files) with only
     # (f)-[:of_study]->(s) and no [:of_participant] edge. The main branch misses them.
+    # Only add the UNION when no participant/sample/diagnosis/genomic filters are active:
+    # when those filters are present the portal excludes study-level files from results,
+    # so adding them would over-count. Only s.* and f.* filters are safe to apply.
+    _PARTICIPANT_PREFIXES = {"p.", "samp.", "diag.", "gi."}
+    has_participant_filters = any(
+        _resolve_field(program, k).split(".")[0] + "." in _PARTICIPANT_PREFIXES
+        for k in (filters or {})
+    )
     union_study_files = ""
-    if tab_name == "FilesTab" and not custom_query:
+    if tab_name == "FilesTab" and not custom_query and not has_participant_filters:
         direct_where = _build_direct_file_where(program, filters)
         union_where = "WHERE NOT (f)-[:of_participant]->(:participant)"
         if direct_where:

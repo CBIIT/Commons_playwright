@@ -38,12 +38,12 @@ def find_tc_files(tc_dir: str, name_filter: str = "", limit: int = 0) -> list[st
     return [str(f) for f in files]
 
 
-def _run_one(tc_path: str, index: int, total: int) -> dict:
+def _run_one(tc_path: str, index: int, total: int, run_dir: str = None) -> dict:
     tc_name = Path(tc_path).stem
     print(f"\n[run_suite] [{index}/{total}] {tc_name}")
     t0 = time.time()
     try:
-        result = run_test_from_excel(tc_path)
+        result = run_test_from_excel(tc_path, run_dir=run_dir)
         elapsed = round(time.time() - t0, 1)
         status = "PASS" if result["passed"] else "FAIL"
         return {
@@ -66,6 +66,16 @@ def _run_one(tc_path: str, index: int, total: int) -> dict:
         }
 
 
+def _make_run_dir() -> str:
+    """Create and return a timestamped subfolder under Reports/ for this run."""
+    from datetime import datetime
+    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
+    run_dir = Path(__file__).parent.parent / "Reports" / f"run_{ts}"
+    run_dir.mkdir(parents=True, exist_ok=True)
+    print(f"[run_suite] Results folder: {run_dir}")
+    return str(run_dir)
+
+
 def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False,
               limit: int = 0, workers: int = 1) -> list[dict]:
     tc_files = find_tc_files(tc_dir, name_filter, limit)
@@ -73,6 +83,8 @@ def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False,
         filter_note = f" matching '{name_filter}'" if name_filter else ""
         print(f"[run_suite] No TC Excel files found in '{tc_dir}'{filter_note}.")
         return []
+
+    run_dir = _make_run_dir()
 
     print(f"\n{'='*70}")
     print(f"[run_suite] Suite: {len(tc_files)} test case(s)  |  workers={workers}")
@@ -84,7 +96,7 @@ def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False,
 
     if workers <= 1:
         for i, tc_path in enumerate(tc_files, 1):
-            r = _run_one(tc_path, i, len(tc_files))
+            r = _run_one(tc_path, i, len(tc_files), run_dir=run_dir)
             results_map[i] = r
             if fail_fast and r["status"] != "PASS":
                 print("[run_suite] --fail-fast: stopping after first failure.")
@@ -93,7 +105,7 @@ def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False,
         futures = {}
         with ThreadPoolExecutor(max_workers=workers) as executor:
             for i, tc_path in enumerate(tc_files, 1):
-                f = executor.submit(_run_one, tc_path, i, len(tc_files))
+                f = executor.submit(_run_one, tc_path, i, len(tc_files), run_dir)
                 futures[f] = i
             for f in as_completed(futures):
                 i = futures[f]
@@ -105,7 +117,7 @@ def run_suite(tc_dir: str, name_filter: str = "", fail_fast: bool = False,
     errors = sum(1 for r in results if r["status"] == "ERROR")
 
     _print_summary(results, passed, failed, errors)
-    _write_report(results)
+    _write_report(results, run_dir)
     return results
 
 
@@ -128,11 +140,10 @@ def _print_summary(results: list[dict], passed: int, failed: int, errors: int):
     print(f"{'='*70}\n")
 
 
-def _write_report(results: list[dict]):
-    report_dir = Path(__file__).parent.parent / "Reports"
-    report_dir.mkdir(exist_ok=True)
-    ts = datetime.now().strftime("%Y%m%d_%H%M%S")
-    report_path = report_dir / f"suite_run_{ts}.csv"
+def _write_report(results: list[dict], run_dir: str = None):
+    report_dir = Path(run_dir) if run_dir else Path(__file__).parent.parent / "Reports"
+    report_dir.mkdir(parents=True, exist_ok=True)
+    report_path = report_dir / "suite_summary.csv"
 
     with open(report_path, "w", newline="") as f:
         writer = csv.writer(f)
@@ -168,6 +179,7 @@ if __name__ == "__main__":
 
     if args.file_list:
         tc_files = [l.strip() for l in open(args.file_list) if l.strip() and not l.startswith("#")]
+        run_dir = _make_run_dir()
         print(f"\n{'='*70}")
         print(f"[run_suite] Suite: {len(tc_files)} test case(s) from --file-list  |  workers={args.workers}")
         print(f"{'='*70}\n")
@@ -175,13 +187,13 @@ if __name__ == "__main__":
         total = len(tc_files)
         if args.workers <= 1:
             for i, tc_path in enumerate(tc_files, 1):
-                results_map[i] = _run_one(tc_path, i, total)
+                results_map[i] = _run_one(tc_path, i, total, run_dir=run_dir)
         else:
             futures = {}
             from concurrent.futures import ThreadPoolExecutor, as_completed
             with ThreadPoolExecutor(max_workers=args.workers) as executor:
                 for i, tc_path in enumerate(tc_files, 1):
-                    f = executor.submit(_run_one, tc_path, i, total)
+                    f = executor.submit(_run_one, tc_path, i, total, run_dir)
                     futures[f] = i
                 for f in as_completed(futures):
                     results_map[futures[f]] = f.result()
@@ -190,7 +202,7 @@ if __name__ == "__main__":
         failed = sum(1 for r in results if r["status"] == "FAIL")
         errors = sum(1 for r in results if r["status"] == "ERROR")
         _print_summary(results, passed, failed, errors)
-        _write_report(results)
+        _write_report(results, run_dir)
     else:
         tc_dir = args.dir
         if not os.path.isabs(tc_dir):
