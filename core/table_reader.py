@@ -103,6 +103,9 @@ def get_current_page_rows(page: Page, table_body_xpath: str) -> list:
                 text = ""
             row_data.append(text)
         if any(row_data):  # skip completely empty rows
+            # Drop leading empty cells (portal tables have a checkbox <td> first)
+            while row_data and row_data[0] == "":
+                row_data = row_data[1:]
             rows.append(row_data)
     return rows
 

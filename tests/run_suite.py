@@ -160,14 +160,40 @@ if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Playwright TC suite runner")
     parser.add_argument("--dir",       default="TestCases", help="Directory containing TC Excel files")
     parser.add_argument("--filter",    default="",          help="Substring filter on TC file names")
+    parser.add_argument("--file-list", default="",          help="Path to a text file listing TC paths to run (one per line)")
     parser.add_argument("--fail-fast", action="store_true", help="Stop after first failure")
     parser.add_argument("--limit",     type=int, default=0, help="Max number of TCs to run (0 = all)")
     parser.add_argument("--workers",   type=int, default=1, help="Parallel browser workers (default 1)")
     args = parser.parse_args()
 
-    tc_dir = args.dir
-    if not os.path.isabs(tc_dir):
-        tc_dir = str(Path(__file__).parent.parent / tc_dir)
-
-    run_suite(tc_dir=tc_dir, name_filter=args.filter, fail_fast=args.fail_fast,
-              limit=args.limit, workers=args.workers)
+    if args.file_list:
+        tc_files = [l.strip() for l in open(args.file_list) if l.strip() and not l.startswith("#")]
+        print(f"\n{'='*70}")
+        print(f"[run_suite] Suite: {len(tc_files)} test case(s) from --file-list  |  workers={args.workers}")
+        print(f"{'='*70}\n")
+        results_map = {}
+        total = len(tc_files)
+        if args.workers <= 1:
+            for i, tc_path in enumerate(tc_files, 1):
+                results_map[i] = _run_one(tc_path, i, total)
+        else:
+            futures = {}
+            from concurrent.futures import ThreadPoolExecutor, as_completed
+            with ThreadPoolExecutor(max_workers=args.workers) as executor:
+                for i, tc_path in enumerate(tc_files, 1):
+                    f = executor.submit(_run_one, tc_path, i, total)
+                    futures[f] = i
+                for f in as_completed(futures):
+                    results_map[futures[f]] = f.result()
+        results = [results_map[i] for i in sorted(results_map)]
+        passed = sum(1 for r in results if r["status"] == "PASS")
+        failed = sum(1 for r in results if r["status"] == "FAIL")
+        errors = sum(1 for r in results if r["status"] == "ERROR")
+        _print_summary(results, passed, failed, errors)
+        _write_report(results)
+    else:
+        tc_dir = args.dir
+        if not os.path.isabs(tc_dir):
+            tc_dir = str(Path(__file__).parent.parent / tc_dir)
+        run_suite(tc_dir=tc_dir, name_filter=args.filter, fail_fast=args.fail_fast,
+                  limit=args.limit, workers=args.workers)

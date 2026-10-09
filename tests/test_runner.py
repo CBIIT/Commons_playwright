@@ -323,11 +323,24 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
         ui_count = len(ui_rows)
         print(f"[test_runner]   UI rows collected: {ui_count}")
 
-    # ── Query Memgraph ────────────────────────────────────────────────────────
+    # ── Query Memgraph (with retry on suspicious 0-row result) ───────────────
+    import time as _time
+    _RETRY_ATTEMPTS = 3
+    _RETRY_DELAY    = 4  # seconds
     try:
-        cypher   = build_query(program, tab_name, filters, custom_query=custom_query)
+        cypher = build_query(program, tab_name, filters, custom_query=custom_query)
         db_rows  = query_memgraph(cypher)
         db_count = len(db_rows)
+        # If DB returned 0 but UI shows rows, Memgraph may have silently dropped
+        # the query under concurrent load — retry before declaring a mismatch.
+        if db_count == 0 and ui_count > 0:
+            for _attempt in range(2, _RETRY_ATTEMPTS + 1):
+                print(f"[test_runner]   DB=0 but UI={ui_count}, retrying Memgraph (attempt {_attempt}/{_RETRY_ATTEMPTS}) in {_RETRY_DELAY}s…")
+                _time.sleep(_RETRY_DELAY)
+                db_rows  = query_memgraph(cypher)
+                db_count = len(db_rows)
+                if db_count > 0:
+                    break
         print(f"[test_runner]   Memgraph rows returned: {db_count}")
     except Exception as e:
         print(f"[test_runner]   Memgraph query failed: {e}")
@@ -555,6 +568,54 @@ def _write_output_excel(testcase_excel: str, program: str, filters: dict,
         else:
             ws_db.append(["(no rows returned)"])
 
+    # ── Cell-by-cell comparison sheets ───────────────────────────────────────
+    MISMATCH_FILL = PatternFill("solid", fgColor="FFD700")
+    MATCH_FILL    = PatternFill("solid", fgColor="CCFFCC")
+    for tab_name, tab_res in result.get("tabs", {}).items():
+        if tab_res.get("skipped"):
+            continue
+        ui_rows = tab_res.get("ui_rows", [])
+        db_rows = tab_res.get("db_rows", [])
+        headers = tab_res.get("headers", [])
+        if not ui_rows or not db_rows:
+            continue
+
+        short = tab_name.replace("Tab", "")
+        ws_cmp = wb.create_sheet(f"Compare_{short}")
+
+        # Build DB rows as lists in same column order as headers
+        db_cols = list(db_rows[0].keys()) if db_rows else []
+        # Map DB col index by position (headers align to DB cols after offset fix)
+        col_count = max(len(headers), len(db_cols))
+
+        # Header row
+        cmp_headers = []
+        for h in headers:
+            cmp_headers += [f"UI_{h}", f"DB_{h}", "Match"]
+        ws_cmp.append(cmp_headers)
+        for cell in ws_cmp[1]:
+            cell.font = BOLD
+            cell.fill = PatternFill("solid", fgColor="D9E1F2")
+
+        # Compare row by row (only collected UI rows)
+        for i, ui_row in enumerate(ui_rows):
+            db_row = db_rows[i] if i < len(db_rows) else {}
+            db_vals = [db_row.get(c, "") for c in db_cols]
+            out = []
+            for j, ui_val in enumerate(ui_row):
+                db_val = db_vals[j] if j < len(db_vals) else ""
+                match = str(ui_val).strip() == str(db_val).strip()
+                out += [ui_val, db_val, "✓" if match else "✗"]
+            ws_cmp.append(out)
+            # Colour mismatched triples
+            for j in range(len(ui_row)):
+                match_cell = ws_cmp.cell(ws_cmp.max_row, j * 3 + 3)
+                if match_cell.value == "✗":
+                    for k in range(3):
+                        ws_cmp.cell(ws_cmp.max_row, j * 3 + 1 + k).fill = MISMATCH_FILL
+                else:
+                    ws_cmp.cell(ws_cmp.max_row, j * 3 + 3).fill = MATCH_FILL
+
     # ── StatBar comparison sheet ──────────────────────────────────────────────
     stat_bar_rows = result.get("stat_bar", [])
     if stat_bar_rows:
@@ -593,6 +654,28 @@ _FACET_EXPANDERS = {
     "CDS": {
         # Add more facet keys here as their expander XPaths are added to the Object Repo
         "DemographicsFacet": "CDS/Data_page/Filter/DemographicsFacet/DemographicsFacet",
+        # GenomicFacet sub-sections: clicking a checkbox requires the sub-accordion to be expanded.
+        # After click_and_wait on the Ddn, React may re-render and collapse the section, so
+        # js_click_and_wait re-expands it via _ensure_facet_expanded before clicking the checkbox.
+        "GenomicFacet/Platform": "CDS/Data_page/Filter/GenomicFacet/Platform/platform_Ddn",
+        "GenomicFacet/LibraryStrategy": "CDS/Data_page/Filter/GenomicFacet/LibraryStrategy/Library_Strategy_Ddn",
+        "GenomicFacet/LibrarySelection": "CDS/Data_page/Filter/GenomicFacet/LibrarySelection/LibrarySelection_Ddn",
+        "GenomicFacet/LibraryLayout": "CDS/Data_page/Filter/GenomicFacet/LibraryLayout/LibraryLayout_Ddn",
+        "GenomicFacet/InstrumentModel": "CDS/Data_page/Filter/GenomicFacet/InstrumentModel/Instrument_model_Ddn",
+        "GenomicFacet/ReferenceGenomeAssembly": "CDS/Data_page/Filter/GenomicFacet/ReferenceGenomeAssembly/Ref_Gen_Assembly_Ddn",
+        "GenomicFacet/LibrarySource": "CDS/Data_page/Filter/GenomicFacet/LibrarySource/LibrarySourceMolecule_Ddn",
+        # SamplesFacet sub-sections
+        "SamplesFacet/SampleTumorStatus": "CDS/Data_page/Filter/SamplesFacet/SampleTumorStatus/SampleTumorStatus-Ddn",
+        "SamplesFacet/SampleType": "CDS/Data_page/Filter/SamplesFacet/SampleType/SampleType-Ddn",
+        # FilesFacet sub-sections
+        "FilesFacet/FileType": "CDS/Data_page/Filter/FilesFacet/FileType/FileType_Ddn",
+        # SequencingFacet mirrors GenomicFacet
+        "SequencingFacet/Platform": "CDS/Data_page/Filter/SequencingFacet/Platform/platform_Ddn",
+        "SequencingFacet/LibraryStrategy": "CDS/Data_page/Filter/SequencingFacet/LibraryStrategy/Library_Strategy_Ddn",
+        "SequencingFacet/LibrarySelection": "CDS/Data_page/Filter/SequencingFacet/LibrarySelection/LibrarySelection_Ddn",
+        "SequencingFacet/LibraryLayout": "CDS/Data_page/Filter/SequencingFacet/LibraryLayout/LibraryLayout_Ddn",
+        "SequencingFacet/InstrumentModel": "CDS/Data_page/Filter/SequencingFacet/InstrumentModel/Instrument_model_Ddn",
+        "SequencingFacet/ReferenceGenomeAssembly": "CDS/Data_page/Filter/SequencingFacet/ReferenceGenomeAssembly/Ref_Gen_Assembly_Ddn",
     },
 }
 
@@ -627,16 +710,29 @@ def _ensure_facet_expanded(page, program: str, page_name: str, obj_name: str):
             return  # already visible, no need to expand
         except (PWTimeout, Exception):
             pass
-        # Section is collapsed — click the expander
-        try:
-            exp_loc = page.locator(f"xpath={expander_xpath}").first
-            exp_loc.wait_for(state="visible", timeout=5000)
-            exp_loc.scroll_into_view_if_needed()
-            exp_loc.click()
-            page.wait_for_timeout(500)
-            print(f"[test_runner]   Auto-expanded facet: {facet_key}")
-        except Exception as e:
-            print(f"[test_runner]   Warning: could not expand facet '{facet_key}': {e}")
+        # Section is collapsed — click the expander, then verify the target appeared.
+        # Retry once if the first click doesn't stick (React re-render race).
+        for attempt in range(2):
+            try:
+                exp_loc = page.locator(f"xpath={expander_xpath}").first
+                exp_loc.wait_for(state="visible", timeout=5000)
+                exp_loc.scroll_into_view_if_needed()
+                exp_loc.click()
+                page.wait_for_timeout(800)
+                print(f"[test_runner]   Auto-expanded facet: {facet_key} (attempt {attempt+1})")
+                # Verify target is now visible; if not, loop and click again
+                try:
+                    effective_obj2 = obj_name
+                    if effective_obj2.startswith(page_name + "/"):
+                        effective_obj2 = effective_obj2[len(page_name) + 1:]
+                    tgt_xpath2 = find_test_object(f"{program}/{page_name}/{effective_obj2}")
+                    page.locator(f"xpath={tgt_xpath2}").first.wait_for(state="visible", timeout=2000)
+                    return  # target visible — done
+                except Exception:
+                    pass  # target still not visible; retry click
+            except Exception as e:
+                print(f"[test_runner]   Warning: could not expand facet '{facet_key}': {e}")
+                break
         return
 
 
