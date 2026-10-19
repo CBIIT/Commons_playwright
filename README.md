@@ -10,6 +10,7 @@ Migrated from Katalon Studio — Excel-driven, environment-agnostic, zero hardco
 | Program | URL (QA) |
 |---------|----------|
 | CDS     | https://general-qa.datacommons.cancer.gov |
+| C3DC    | https://clinicalcommons-qa.ccdi.cancer.gov |
 | Canine  | https://caninecommons.cancer.gov |
 | CTDC    | https://clinical.datacommons.cancer.gov |
 
@@ -159,3 +160,14 @@ run_test_from_excel('TestCases/TC01_CDS_phs001437_Sex-Unknown_ExperimentalStrate
 3. Add the program's URLs to `config/settings.py` under `_BASE_URLS` and page paths under `_PAGE_PATHS`
 4. Add tab definitions to `PROGRAM_TABS` in `tests/test_runner.py`
 5. Create a Test Case Excel in `TestCases/`
+
+### C3DC (Explore Participants)
+
+- **Object repo (preferred):** sync from `commons-automation` YAML (updated Explore nav, tabs, filters):
+  `python tools/import_commons_or.py C3DC ../commons-automation/ObjectRepository/C3DC`
+- **Object repo (legacy Katalon .rs):** `python tools/import_katalon_or.py C3DC "../Commons_Automation/Object Repository/C3DC"`
+- **Sample TCs:** `python tools/build_c3dc_testcases.py` → `TestCases/C3DC/TC01_C3DC_*.xlsx`
+- **Memgraph:** C3DC QA often uses a **different** Bolt endpoint than CDS — set `MEMGRAPH_HOST` / credentials in `.env` before running (see `commons-automation/config/environments.yaml` → `apps.C3DC.memgraph`).
+- **Run one TC:**  
+  `ENV=qa python3 -c "from tests.test_runner import run_test_from_excel; run_test_from_excel('TestCases/C3DC/TC01_C3DC_phs000463_SexAtBirth-Female.xlsx')"`
+- **Run C3DC suite slice:** `python3 -m tests.run_suite --dir TestCases/C3DC` or `--filter C3DC_phs000463`

@@ -9,6 +9,13 @@ To run against prod:  export ENV=prod
 To run against stage: export ENV=stage
 """
 import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 # ── Active environment ────────────────────────────────────────────────────────
 # Set ENV=prod or ENV=stage on CI/CD. Default is qa.
@@ -57,9 +64,9 @@ _BASE_URLS = {
         "stage":os.environ.get("URL_CCDI_STAGE", ""),
     },
     "C3DC": {
-        "qa":   os.environ.get("URL_C3DC_QA",   ""),
-        "prod": os.environ.get("URL_C3DC_PROD",  ""),
-        "stage":os.environ.get("URL_C3DC_STAGE", ""),
+        "qa":   os.environ.get("URL_C3DC_QA",   "https://clinicalcommons-qa.ccdi.cancer.gov"),
+        "prod": os.environ.get("URL_C3DC_PROD",  "https://clinicalcommons.ccdi.cancer.gov"),
+        "stage":os.environ.get("URL_C3DC_STAGE", "https://clinicalcommons-stage.ccdi.cancer.gov"),
     },
     "CTDC": {
         "qa":   os.environ.get("URL_CTDC_QA",   "https://clinical.datacommons.cancer.gov"),
@@ -126,6 +133,10 @@ _PAGE_PATHS = {
         "Programs":   "/#/programs",
         "Studies":    "/#/studies",
         "Cart":       "/#/fileCentricCart",
+    },
+    "C3DC": {
+        "Home":    "/",
+        "Explore": "/#/exploreParticipants",
     },
     "CTDC": {
         "Home":             "/#/",

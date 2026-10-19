@@ -60,7 +60,25 @@ NODE_PREFIX = {
             "library_layout", "library_selection", "reference_genome_assembly",
             "methylation_platform",
         ],
-    }
+    },
+    "C3DC": {
+        "s": [
+            "dbgap_accession", "study_name", "study_id", "study_phase",
+        ],
+        "p": [
+            "sex_at_birth", "race", "ethnicity", "occupation",
+        ],
+        "d": [
+            "diagnosis", "diagnosis_id", "disease_phase", "anatomic_site",
+            "primary_diagnosis", "age_at_diagnosis",
+        ],
+        "sm": [
+            "sample_id", "sample_type", "sample_tumor_status", "sample_anatomic_site",
+        ],
+        "surv": [
+            "last_known_survival_status", "first_event", "cause_of_death",
+        ],
+    },
 }
 
 # ── Short aliases — TC filter key → Cypher field ──────────────────────────────
@@ -74,7 +92,10 @@ FIELD_ALIASES = {
         "tumor_status":     "samp.sample_tumor_status",
         "library_source":   "gi.library_source",
         "reference_genome": "gi.reference_genome_assembly",
-    }
+    },
+    "C3DC": {
+        "phs": "s.dbgap_accession",
+    },
 }
 
 # Build reverse lookup: property_name → node_alias  (built once at import time)
@@ -117,7 +138,12 @@ _EXTRA_MATCH = {
         "samp.": "MATCH (samp:sample)-[:of_participant]->(p)",
         "diag.": "MATCH (diag:diagnosis)-[:of_participant]->(p)",
         "gi.":   "MATCH (gi:genomic_info)-[:of_file]->(f)",
-    }
+    },
+    "C3DC": {
+        "d.":   "MATCH (d:diagnosis)-[:of_diagnosis]->(p)",
+        "sm.":  "MATCH (sm:sample)-[:of_sample]->(p)",
+        "surv.": "MATCH (surv:survival)-[:of_survival]->(p)",
+    },
 }
 
 # Some extra MATCH clauses depend on another node being in scope first.
@@ -136,11 +162,21 @@ _ALREADY_BOUND = {
         "SamplesTab":      {"samp", "p", "s"},
         "FilesTab":        {"f", "p", "s"},
         "StatBar":         {"p", "s"},
-    }
+    },
+    "C3DC": {
+        "ParticipantsTab": {"p", "s"},
+        "StudiesTab":      {"p", "s"},
+        "DiagnosisTab":    {"d", "p", "s"},
+        "SamplesTab":      {"sm", "p", "s"},
+        "StatBar":         {"p", "s"},
+    },
 }
 
 # Maps alias prefix → the variable name it binds (used with _ALREADY_BOUND).
-_ALIAS_VAR = {"f.": "f", "samp.": "samp", "gi.": "gi", "diag.": "diag"}
+_ALIAS_VAR = {
+    "f.": "f", "samp.": "samp", "gi.": "gi", "diag.": "diag",
+    "d.": "d", "sm.": "sm", "surv.": "surv",
+}
 
 # Tabs where each gi.* (and f.*) filter condition is evaluated on SEPARATE file/gi nodes
 # rather than requiring all conditions to match the SAME genomic_info node.
@@ -279,6 +315,49 @@ RETURN
   count(DISTINCT p)    AS Participants,
   count(DISTINCT samp) AS Samples,
   count(DISTINCT f)    AS Files
+        """,
+    },
+    "C3DC": {
+        "ParticipantsTab": """
+MATCH (p:participant)-[:of_participant]->(:consent_group)-[:of_consent_group]->(s:study)
+{extra_match}
+{where}
+RETURN DISTINCT p.participant_id AS participant_id
+ORDER BY participant_id
+        """,
+        "StudiesTab": """
+MATCH (p:participant)-[:of_participant]->(:consent_group)-[:of_consent_group]->(s:study)
+{extra_match}
+{where}
+RETURN DISTINCT s.study_id AS study_id
+ORDER BY study_id
+        """,
+        "DiagnosisTab": """
+MATCH (d:diagnosis)-[:of_diagnosis]->(p:participant)-[:of_participant]->(:consent_group)-[:of_consent_group]->(s:study)
+{extra_match}
+{where}
+RETURN DISTINCT d.diagnosis_id AS diagnosis_id
+ORDER BY diagnosis_id
+        """,
+        "SamplesTab": """
+MATCH (sm:sample)-[:of_sample]->(p:participant)-[:of_participant]->(:consent_group)-[:of_consent_group]->(s:study)
+{extra_match}
+{where}
+RETURN DISTINCT sm.sample_id AS sample_id
+ORDER BY sample_id
+        """,
+        "StatBar": """
+MATCH (p:participant)-[:of_participant]->(:consent_group)-[:of_consent_group]->(s:study)
+{extra_match}
+{where}
+OPTIONAL MATCH (sm:sample)-[:of_sample]->(p)
+OPTIONAL MATCH (f)-[:of_sequencing_file|of_clinical_measure_file|of_cytogenomic_file|of_generic_file|of_methylation_array_file|of_pathology_file|of_radiology_file]->(sm)
+OPTIONAL MATCH (fp)-[:of_clinical_measure_file|of_generic_file|of_radiology_file]->(p)
+RETURN
+  count(DISTINCT s)  AS Studies,
+  count(DISTINCT p)  AS Participants,
+  count(DISTINCT sm) AS Samples,
+  count(DISTINCT f) + count(DISTINCT fp) AS Files
         """,
     },
 }

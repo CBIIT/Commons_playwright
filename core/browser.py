@@ -29,7 +29,7 @@ def launch_browser(headless: bool = HEADLESS,
     else:
         browser = playwright.chromium.launch(headless=headless)
 
-    page = browser.new_page()
+    page = browser.new_page(viewport={"width": 1920, "height": 1080})
     page.set_default_timeout(DEFAULT_TIMEOUT)
 
     return playwright, browser, page

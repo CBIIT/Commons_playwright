@@ -25,6 +25,19 @@ from core.excel_reader  import load_study_config, compare_sheets
 from config.settings    import get_url, OUTPUT_FILES_ROOT
 
 # ── Per-program result tab definitions ────────────────────────────────────────
+def _c3dc_tab(tab_name, tab_label, tbl_key, hdr_key, stat_key=None):
+    """Helper: C3DC explore tabs use table OR keys + shared Next button + tab_label for More menu."""
+    return {
+        "tab_name":   tab_name,
+        "tab_label":  tab_label,
+        "tab_btn":    None,
+        "table_body": f"C3DC/ResultTabs/{tbl_key}",
+        "table_hdr":  f"C3DC/ResultTabs/{hdr_key}",
+        "next_btn":   "C3DC/ResultTabs/All_Tabs_Next-Btn",
+        "stat_key":   stat_key,
+    }
+
+
 PROGRAM_TABS = {
     "CDS": [
         {
@@ -49,12 +62,19 @@ PROGRAM_TABS = {
             "next_btn":   "CDS/Data_page/CDS_FilesTabNextBtn",
         },
     ],
+    "C3DC": [
+        _c3dc_tab("ParticipantsTab", "Participants", "Participants-Tbl", "Participants-TblHdr", stat_key="participants"),
+        _c3dc_tab("StudiesTab", "Studies", "Studies-Tbl", "Studies-TblHdr", stat_key="studies"),
+        _c3dc_tab("DiagnosisTab", "Diagnosis", "Diagnosis-Tbl", "Diagnosis-TblHdr", stat_key="participants"),
+        _c3dc_tab("SamplesTab", "Samples", "Samples-Tbl", "Samples-TblHdr", stat_key="participants"),
+    ],
 }
 
 PROGRAM_NAV_BTN = {
     "CDS":    "CDS/NavBar/CDS_Data-Btn",
     "Canine": "Canine/NavBar/Canine_Data-Btn",
     "CTDC":   "CTDC/NavBar/CTDC_Data-Btn",
+    "C3DC":   "C3DC/Navbar/Explore-Tab",
 }
 
 
@@ -178,6 +198,8 @@ def run_test_from_excel(testcase_excel: str, run_dir: str = None):
             elif action == "click_and_wait":
                 _ensure_facet_expanded(page, program, page_name, obj_name)
                 click_and_wait(page, _xpath())
+                if program == "C3DC" and page_name == "Navbar" and obj_name == "Explore-Tab":
+                    _wait_c3dc_explore_ready(page)
 
             elif action == "js_click_and_wait":
                 from core.actions import js_click
@@ -225,7 +247,11 @@ def run_test_from_excel(testcase_excel: str, run_dir: str = None):
                     print(f"[test_runner] Warning: no tab definition for '{tab_name}' — skipping")
                     continue
 
-                click_element(page, find_test_object(tab_def["tab_btn"]))
+                if program == "C3DC" and tab_def.get("tab_label"):
+                    from core.c3dc_tabs import select_c3dc_tab
+                    select_c3dc_tab(page, tab_def["tab_name"])
+                else:
+                    click_element(page, find_test_object(tab_def["tab_btn"]))
 
                 tab_result = _run_multi_function(
                     page=page,
@@ -299,7 +325,7 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
     from core.memgraph_reader import query_memgraph
 
     tab_name  = tab_def["tab_name"]
-    stat_key  = _tab_to_stat_key(tab_name)
+    stat_key  = tab_def.get("stat_key") or _tab_to_stat_key(tab_name)
     stat_value = stat_counts.get(stat_key, 0)
 
     if stat_value == 0:
@@ -659,11 +685,7 @@ def _write_output_excel(testcase_excel: str, program: str, filters: dict,
 # If the expander element is not visible (section already open), this is a no-op.
 _FACET_EXPANDERS = {
     "CDS": {
-        # Add more facet keys here as their expander XPaths are added to the Object Repo
         "DemographicsFacet": "CDS/Data_page/Filter/DemographicsFacet/DemographicsFacet",
-        # GenomicFacet sub-sections: clicking a checkbox requires the sub-accordion to be expanded.
-        # After click_and_wait on the Ddn, React may re-render and collapse the section, so
-        # js_click_and_wait re-expands it via _ensure_facet_expanded before clicking the checkbox.
         "GenomicFacet/Platform": "CDS/Data_page/Filter/GenomicFacet/Platform/platform_Ddn",
         "GenomicFacet/LibraryStrategy": "CDS/Data_page/Filter/GenomicFacet/LibraryStrategy/Library_Strategy_Ddn",
         "GenomicFacet/LibrarySelection": "CDS/Data_page/Filter/GenomicFacet/LibrarySelection/LibrarySelection_Ddn",
@@ -671,12 +693,9 @@ _FACET_EXPANDERS = {
         "GenomicFacet/InstrumentModel": "CDS/Data_page/Filter/GenomicFacet/InstrumentModel/Instrument_model_Ddn",
         "GenomicFacet/ReferenceGenomeAssembly": "CDS/Data_page/Filter/GenomicFacet/ReferenceGenomeAssembly/Ref_Gen_Assembly_Ddn",
         "GenomicFacet/LibrarySource": "CDS/Data_page/Filter/GenomicFacet/LibrarySource/LibrarySourceMolecule_Ddn",
-        # SamplesFacet sub-sections
         "SamplesFacet/SampleTumorStatus": "CDS/Data_page/Filter/SamplesFacet/SampleTumorStatus/SampleTumorStatus-Ddn",
         "SamplesFacet/SampleType": "CDS/Data_page/Filter/SamplesFacet/SampleType/SampleType-Ddn",
-        # FilesFacet sub-sections
         "FilesFacet/FileType": "CDS/Data_page/Filter/FilesFacet/FileType/FileType_Ddn",
-        # SequencingFacet mirrors GenomicFacet
         "SequencingFacet/Platform": "CDS/Data_page/Filter/SequencingFacet/Platform/platform_Ddn",
         "SequencingFacet/LibraryStrategy": "CDS/Data_page/Filter/SequencingFacet/LibraryStrategy/Library_Strategy_Ddn",
         "SequencingFacet/LibrarySelection": "CDS/Data_page/Filter/SequencingFacet/LibrarySelection/LibrarySelection_Ddn",
@@ -684,7 +703,63 @@ _FACET_EXPANDERS = {
         "SequencingFacet/InstrumentModel": "CDS/Data_page/Filter/SequencingFacet/InstrumentModel/Instrument_model_Ddn",
         "SequencingFacet/ReferenceGenomeAssembly": "CDS/Data_page/Filter/SequencingFacet/ReferenceGenomeAssembly/Ref_Gen_Assembly_Ddn",
     },
+    "C3DC": {
+        "Study/dbGaP_Accession": "C3DC/Filters/Study/dbGaP_Accession/dbGaP_Accession-Ddn",
+        "Demographics/SexAtBirth": "C3DC/Filters/Demographics/SexAtBirth/SexAtBirth-Ddn",
+        "Samples/SampleTumorStatus": "C3DC/Filters/Samples/SampleTumorStatus/SampleTumorStatus_Ddn",
+        "Samples/SampleType": "C3DC/Filters/Samples/SampleType/SampleType_Ddn",
+        "Diagnosis/Diagnosis": "C3DC/Filters/Diagnosis/Diagnosis/Diagnosis-Ddn",
+    },
 }
+
+def _wait_c3dc_explore_ready(page):
+    """Explore Participants view — left filter panel (Study facet) must be visible."""
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    study_facet = find_test_object("C3DC/Filters/Study/Study_Facet")
+    try:
+        page.locator(f"xpath={study_facet}").first.wait_for(state="visible", timeout=30000)
+        print("[test_runner]   C3DC Explore Participants ready (filter panel visible)")
+    except PWTimeout:
+        print("[test_runner]   Warning: Explore filter panel not visible after Explore-Tab click")
+
+
+# C3DC left panel: top-level accordion (Study, Demographics, …) before sub-filter dropdowns.
+_C3DC_PANEL_FACETS = {
+    "Study/": "C3DC/Filters/Study/Study_Facet",
+    "Demographics/": "C3DC/Filters/Demographics/Demographics_Facet",
+    "Samples/": "C3DC/Filters/Samples/Samples_Facet",
+    "Diagnosis/": "C3DC/Filters/Diagnosis/Diagnosis-Facet",
+}
+
+
+def _ensure_c3dc_panel_expanded(page, obj_name: str, target_xpath: str | None):
+    """Open the top-level filter accordion that contains obj_name (Katalon *Facet click)."""
+    from playwright.sync_api import TimeoutError as PWTimeout
+
+    if "Filters/" not in obj_name:
+        return
+    if target_xpath:
+        try:
+            page.locator(f"xpath={target_xpath}").first.wait_for(state="visible", timeout=1500)
+            return
+        except PWTimeout:
+            pass
+
+    for prefix, facet_repo_key in _C3DC_PANEL_FACETS.items():
+        if prefix not in obj_name:
+            continue
+        try:
+            facet_xpath = find_test_object(facet_repo_key)
+            floc = page.locator(f"xpath={facet_xpath}").first
+            floc.wait_for(state="visible", timeout=8000)
+            floc.scroll_into_view_if_needed()
+            floc.evaluate("el => el.click()")
+            page.wait_for_timeout(600)
+            print(f"[test_runner]   Opened C3DC panel: {prefix.rstrip('/')}")
+        except Exception as e:
+            print(f"[test_runner]   Warning: could not open C3DC panel {prefix}: {e}")
+        return
 
 
 def _ensure_facet_expanded(page, program: str, page_name: str, obj_name: str):
@@ -694,6 +769,19 @@ def _ensure_facet_expanded(page, program: str, page_name: str, obj_name: str):
     Silently does nothing if the section is already open or the expander isn't configured.
     """
     from playwright.sync_api import TimeoutError as PWTimeout
+    from core.actions import js_click
+
+    effective_obj = obj_name
+    if effective_obj.startswith(page_name + "/"):
+        effective_obj = effective_obj[len(page_name) + 1:]
+    try:
+        target_xpath = find_test_object(f"{program}/{page_name}/{effective_obj}")
+    except KeyError:
+        target_xpath = None
+
+    if program == "C3DC":
+        _ensure_c3dc_panel_expanded(page, obj_name, target_xpath)
+
     expanders = _FACET_EXPANDERS.get(program, {})
     for facet_key, expander_repo_key in expanders.items():
         if facet_key not in obj_name:
@@ -707,16 +795,13 @@ def _ensure_facet_expanded(page, program: str, page_name: str, obj_name: str):
         # CDS facet expanders are always visible (they're the section headers); the children
         # (Gender-Ddn, etc.) are only visible when the section is open.
         # So: try waiting briefly for the target element; if it's not visible, click expander.
-        try:
-            effective_obj = obj_name
-            if effective_obj.startswith(page_name + "/"):
-                effective_obj = effective_obj[len(page_name) + 1:]
-            target_xpath = find_test_object(f"{program}/{page_name}/{effective_obj}")
-            loc = page.locator(f"xpath={target_xpath}").first
-            loc.wait_for(state="visible", timeout=2000)
-            return  # already visible, no need to expand
-        except (PWTimeout, Exception):
-            pass
+        if target_xpath:
+            try:
+                loc = page.locator(f"xpath={target_xpath}").first
+                loc.wait_for(state="visible", timeout=2000)
+                return  # already visible, no need to expand
+            except (PWTimeout, Exception):
+                pass
         # Section is collapsed — click the expander, then verify the target appeared.
         # Retry once if the first click doesn't stick (React re-render race).
         for attempt in range(2):
@@ -724,15 +809,17 @@ def _ensure_facet_expanded(page, program: str, page_name: str, obj_name: str):
                 exp_loc = page.locator(f"xpath={expander_xpath}").first
                 exp_loc.wait_for(state="visible", timeout=5000)
                 exp_loc.scroll_into_view_if_needed()
-                exp_loc.click()
+                if program == "C3DC":
+                    js_click(page, expander_xpath)
+                else:
+                    exp_loc.click()
                 page.wait_for_timeout(800)
                 print(f"[test_runner]   Auto-expanded facet: {facet_key} (attempt {attempt+1})")
                 # Verify target is now visible; if not, loop and click again
                 try:
-                    effective_obj2 = obj_name
-                    if effective_obj2.startswith(page_name + "/"):
-                        effective_obj2 = effective_obj2[len(page_name) + 1:]
-                    tgt_xpath2 = find_test_object(f"{program}/{page_name}/{effective_obj2}")
+                    tgt_xpath2 = target_xpath or find_test_object(
+                        f"{program}/{page_name}/{effective_obj}"
+                    )
                     page.locator(f"xpath={tgt_xpath2}").first.wait_for(state="visible", timeout=2000)
                     return  # target visible — done
                 except Exception:

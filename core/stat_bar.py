@@ -92,16 +92,17 @@ def read_stat_bar_ccdi(page: Page) -> dict:
 
 def read_stat_bar_c3dc(page: Page) -> dict:
     """
-    Read stat bar counts for C3DC program.
-    Replaces: readStatBarC3DC() in TestRunner.groovy.
+    Read stat bar counts for C3DC Explore Participants.
+    Order: statsbar_count_1..4 = Studies, Participants, Samples, Files.
 
     Returns:
-        dict: { 'diagnoses': int, 'participants': int, 'studies': int }
+        dict: { 'studies', 'participants', 'samples', 'files' }
     """
     return {
-        "diagnoses":    _read_stat(page, "C3DC/Statbar/Diagnosis-Count"),
-        "participants": _read_stat(page, "C3DC/Statbar/Participants-Count"),
         "studies":      _read_stat(page, "C3DC/Statbar/Studies-Count"),
+        "participants": _read_stat(page, "C3DC/Statbar/Participants-Count"),
+        "samples":      _read_stat(page, "C3DC/Statbar/Samples-Count"),
+        "files":        _read_stat(page, "C3DC/Statbar/Files-Count"),
     }
 
 
