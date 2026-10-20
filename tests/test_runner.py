@@ -7,7 +7,7 @@ Steps sheet columns:
 
 Filter column: tester writes key=value on checkbox steps e.g. sex=Male, phs=phs001437
 Runner collects all Filter values during execution, then uses them to:
-  - Build Cypher WHERE clause via query_builder.py
+  - Build Cypher via core/query_builders.py (per-app: query_builder_cds.py, query_builder_c3dc.py, …)
   - Query Memgraph via memgraph_reader.py
   - Compare UI rows vs Memgraph rows on multi_function steps
   - Compare UI stat bar counts vs Memgraph StatBar query on read_stat_bar steps
@@ -66,7 +66,12 @@ PROGRAM_TABS = {
         _c3dc_tab("ParticipantsTab", "Participants", "Participants-Tbl", "Participants-TblHdr", stat_key="participants"),
         _c3dc_tab("StudiesTab", "Studies", "Studies-Tbl", "Studies-TblHdr", stat_key="studies"),
         _c3dc_tab("DiagnosisTab", "Diagnosis", "Diagnosis-Tbl", "Diagnosis-TblHdr", stat_key="participants"),
+        _c3dc_tab("GeneticAnalysisTab", "Genetic Analyses", "GeneticAnalysis-Tbl", "GeneticAnalysis-TblHdr", stat_key="participants"),
+        _c3dc_tab("TreatmentTab", "Treatments", "Treatment-Tbl", "Treatment-TblHdr", stat_key="participants"),
+        _c3dc_tab("TreatmentRespTab", "Treatment Response", "TreatmentResp-Tbl", "TreatmentResp-TblHdr", stat_key="participants"),
+        _c3dc_tab("SurvivalTab", "Survival", "Survival-Tbl", "Survival-TblHdr", stat_key="participants"),
         _c3dc_tab("SamplesTab", "Samples", "Samples-Tbl", "Samples-TblHdr", stat_key="participants"),
+        _c3dc_tab("FilesTab", "Files", "Files-Tbl", "Files-TblHdr", stat_key="files"),
     ],
 }
 
@@ -247,6 +252,10 @@ def run_test_from_excel(testcase_excel: str, run_dir: str = None):
                     print(f"[test_runner] Warning: no tab definition for '{tab_name}' — skipping")
                     continue
 
+                if program == "C3DC" and tab_name == "FilesTab":
+                    from core.actions import click_and_wait
+                    click_and_wait(page, find_test_object("C3DC/Navbar/ExploreFiles-Tab"))
+                    page.wait_for_timeout(800)
                 if program == "C3DC" and tab_def.get("tab_label"):
                     from core.c3dc_tabs import select_c3dc_tab
                     select_c3dc_tab(page, tab_def["tab_name"])
@@ -321,7 +330,7 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
     Returns:
         dict: { passed, mismatches, ui_count, db_count, ui_rows, db_rows, headers }
     """
-    from core.query_builder  import build_query
+    from core.query_builders import build_query
     from core.memgraph_reader import query_memgraph
 
     tab_name  = tab_def["tab_name"]
@@ -407,7 +416,7 @@ def _compare_stat_bar(program: str, filters: dict, ui_counts: dict, custom_queri
     Query Memgraph StatBar and compare counts against UI stat bar.
     Returns list of comparison rows: [{metric, ui, db, match}]
     """
-    from core.query_builder  import build_query
+    from core.query_builders import build_query
     from core.memgraph_reader import query_memgraph
 
     comparison = []

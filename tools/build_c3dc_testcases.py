@@ -46,10 +46,16 @@ def _steps(phs: str, sex: str, sex_chkbx: str) -> list[list]:
         [7, None, None, None, None, "click_and_wait", "Filters", "Demographics/SexAtBirth/SexAtBirth-Ddn", None, None, "Open Sex at Birth list"],
         [8, None, None, None, None, "js_click_and_wait", "Filters", f"Demographics/SexAtBirth/{sex_chkbx}", None, f"sex_at_birth={sex}", f"Select {sex}"],
         [9, None, None, None, None, "read_stat_bar", None, None, "C3DC", None, "Read stat bar"],
+        # Result tabs — same order as Commons_Automation InputFiles C3DC TabName rows
         [10, None, None, None, None, "multi_function", None, None, "ParticipantsTab", None, "Compare Participants"],
         [11, None, None, None, None, "multi_function", None, None, "StudiesTab", None, "Compare Studies"],
         [12, None, None, None, None, "multi_function", None, None, "DiagnosisTab", None, "Compare Diagnosis"],
-        [13, None, None, None, None, "multi_function", None, None, "SamplesTab", None, "Compare Samples"],
+        [13, None, None, None, None, "multi_function", None, None, "GeneticAnalysisTab", None, "Compare Genetic Analysis"],
+        [14, None, None, None, None, "multi_function", None, None, "TreatmentTab", None, "Compare Treatments"],
+        [15, None, None, None, None, "multi_function", None, None, "TreatmentRespTab", None, "Compare Treatment Response"],
+        [16, None, None, None, None, "multi_function", None, None, "SurvivalTab", None, "Compare Survival"],
+        [17, None, None, None, None, "multi_function", None, None, "SamplesTab", None, "Compare Samples"],
+        [18, None, None, None, None, "multi_function", None, None, "FilesTab", None, "Compare Files (Explore Files)"],
     ]
 
 
