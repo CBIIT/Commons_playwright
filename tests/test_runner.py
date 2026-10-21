@@ -253,7 +253,6 @@ def run_test_from_excel(testcase_excel: str, run_dir: str = None):
                     continue
 
                 if program == "C3DC" and tab_name == "FilesTab":
-                    from core.actions import click_and_wait
                     click_and_wait(page, find_test_object("C3DC/Navbar/ExploreFiles-Tab"))
                     page.wait_for_timeout(800)
                 if program == "C3DC" and tab_def.get("tab_label"):
