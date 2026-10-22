@@ -1,94 +1,86 @@
 """
 memgraph_reader.py
-Connects to Memgraph via Bolt protocol and executes Cypher queries.
+Connects to Memgraph via Bolt and executes Cypher.
 
-Credentials are read from environment variables — never hardcoded:
-  MEMGRAPH_HOST      bolt:// URL of the Memgraph NLB endpoint
-  MEMGRAPH_PORT      default 7687
-  MEMGRAPH_USERNAME  default memgraph
-  MEMGRAPH_PASSWORD
-
-Usage:
-  from core.memgraph_reader import query_memgraph
-  rows = query_memgraph(cypher_string)
-  # returns list of dicts, one per row
+Per-app credentials come from get_memgraph_config(program):
+  C3DC → MEMGRAPH_HOST_C3DC / MEMGRAPH_PASSWORD_C3DC (QA ccdi-dcc cluster)
+  CDS  → MEMGRAPH_HOST / MEMGRAPH_PASSWORD (gen-dev NLB)
 """
-
 import atexit
+import re
 import threading
+import time
 
-from config.settings import MEMGRAPH_HOST, MEMGRAPH_PORT, MEMGRAPH_USERNAME, MEMGRAPH_PASSWORD
+from config.settings import get_memgraph_config
 
-# Global lock — serializes all queries so only one runs at a time.
-# Memgraph silently returns 0 rows under concurrent load, so one-at-a-time is essential.
 _QUERY_LOCK = threading.Lock()
-
-# Single persistent connection — opened once on first query, reused for all subsequent queries.
-_conn = None
+_drivers: dict[str, object] = {}
 _conn_lock = threading.Lock()
-
-
-def _get_conn():
-    """Return the shared persistent neo4j driver session, creating it on first call."""
-    global _conn
-    if _conn is not None:
-        return _conn
-    with _conn_lock:
-        if _conn is not None:
-            return _conn
-        try:
-            from neo4j import GraphDatabase
-        except ImportError:
-            raise ImportError("neo4j driver not installed. Run: pip install neo4j")
-
-        if not MEMGRAPH_HOST:
-            raise ValueError("MEMGRAPH_HOST is not set. Export it as an environment variable before running.")
-
-        host = MEMGRAPH_HOST.rstrip("/")
-        if not host.startswith("bolt://"):
-            host = f"bolt://{host}"
-        uri = f"{host}:{MEMGRAPH_PORT}"
-
-        _conn = GraphDatabase.driver(
-            uri,
-            auth=(MEMGRAPH_USERNAME, MEMGRAPH_PASSWORD),
-            connection_timeout=30,
-            max_transaction_retry_time=0,
-        )
-        atexit.register(_close_conn)
-        print(f"[memgraph_reader] Connected to {uri}")
-        return _conn
-
-
-def _close_conn():
-    global _conn
-    if _conn is not None:
-        try:
-            _conn.close()
-        except Exception:
-            pass
-        _conn = None
-
 
 _MAX_RETRIES = 3
 _RETRY_DELAY_S = 5
 
 
-def query_memgraph(cypher: str) -> list[dict]:
-    """
-    Execute a Cypher query and return results as a list of dicts.
+def _bolt_uri(host: str, port: int) -> str:
+    host = (host or "").rstrip("/")
+    if not host:
+        raise ValueError("Memgraph host is empty. Set MEMGRAPH_HOST or MEMGRAPH_HOST_<APP>.")
+    if not host.startswith("bolt://"):
+        host = f"bolt://{host}"
+    if re.search(r":\d+$", host):
+        return host
+    return f"{host}:{port}"
 
-    Uses a global lock (one query at a time) and a single persistent connection
-    opened once with credentials — same pattern as a global SQL con.execute().
-    Retries up to 3 times on transient errors or DB=0 returns.
+
+def _get_conn(program: str | None = None):
+    key = (program or "default").upper()
+    if key in _drivers:
+        return _drivers[key]
+    with _conn_lock:
+        if key in _drivers:
+            return _drivers[key]
+        try:
+            from neo4j import GraphDatabase
+        except ImportError:
+            raise ImportError("neo4j driver not installed. Run: pip install neo4j")
+
+        cfg = get_memgraph_config(program)
+        uri = _bolt_uri(cfg["host"], cfg["port"])
+        if not cfg["password"]:
+            raise ValueError(
+                f"Memgraph password is empty for {key}. "
+                f"Set MEMGRAPH_PASSWORD_{key} (or MEMGRAPH_PASSWORD) in .env."
+            )
+        driver = GraphDatabase.driver(
+            uri,
+            auth=(cfg["username"], cfg["password"]),
+            connection_timeout=30,
+            max_transaction_retry_time=0,
+        )
+        _drivers[key] = driver
+        atexit.register(_close_all)
+        print(f"[memgraph_reader] Connected ({key}) {uri}")
+        return driver
+
+
+def _close_all():
+    for driver in list(_drivers.values()):
+        try:
+            driver.close()
+        except Exception:
+            pass
+    _drivers.clear()
+
+
+def query_memgraph(cypher: str, program: str | None = None) -> list[dict]:
     """
-    import time
+    Run Cypher against the Memgraph cluster for `program` (C3DC vs CDS).
+    """
 
     def _execute() -> list[dict]:
-        driver = _get_conn()
+        driver = _get_conn(program)
         with driver.session() as session:
-            result = session.run(cypher)
-            return [dict(record) for record in result]
+            return [dict(record) for record in session.run(cypher)]
 
     with _QUERY_LOCK:
         last_exc: Exception | None = None
@@ -97,25 +89,29 @@ def query_memgraph(cypher: str) -> list[dict]:
                 rows = _execute()
                 if rows or attempt == _MAX_RETRIES:
                     return rows
-                # DB returned 0 rows — retry before accepting
-                print(f"[memgraph_reader] DB=0 on attempt {attempt}/{_MAX_RETRIES}, retrying in {_RETRY_DELAY_S}s")
+                print(
+                    f"[memgraph_reader] DB=0 on attempt {attempt}/{_MAX_RETRIES}, "
+                    f"retrying in {_RETRY_DELAY_S}s"
+                )
                 time.sleep(_RETRY_DELAY_S)
             except Exception as e:
                 last_exc = e
                 if attempt < _MAX_RETRIES:
-                    print(f"[memgraph_reader] Error attempt {attempt}/{_MAX_RETRIES}, retrying in {_RETRY_DELAY_S}s: {e}")
+                    print(
+                        f"[memgraph_reader] Error attempt {attempt}/{_MAX_RETRIES}, "
+                        f"retrying in {_RETRY_DELAY_S}s: {e}"
+                    )
                     time.sleep(_RETRY_DELAY_S)
                 else:
                     print(f"[memgraph_reader] All {_MAX_RETRIES} attempts failed: {e}")
-
         if last_exc:
             raise last_exc
         return []
 
 
-def test_connection() -> bool:
+def test_connection(program: str | None = None) -> bool:
     try:
-        rows = query_memgraph("RETURN 1 AS ok")
+        rows = query_memgraph("RETURN 1 AS ok", program=program)
         return len(rows) > 0 and rows[0].get("ok") == 1
     except Exception as e:
         print(f"[memgraph_reader] Connection failed: {e}")

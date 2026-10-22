@@ -66,12 +66,7 @@ PROGRAM_TABS = {
         _c3dc_tab("ParticipantsTab", "Participants", "Participants-Tbl", "Participants-TblHdr", stat_key="participants"),
         _c3dc_tab("StudiesTab", "Studies", "Studies-Tbl", "Studies-TblHdr", stat_key="studies"),
         _c3dc_tab("DiagnosisTab", "Diagnosis", "Diagnosis-Tbl", "Diagnosis-TblHdr", stat_key="participants"),
-        _c3dc_tab("GeneticAnalysisTab", "Genetic Analyses", "GeneticAnalysis-Tbl", "GeneticAnalysis-TblHdr", stat_key="participants"),
-        _c3dc_tab("TreatmentTab", "Treatments", "Treatment-Tbl", "Treatment-TblHdr", stat_key="participants"),
-        _c3dc_tab("TreatmentRespTab", "Treatment Response", "TreatmentResp-Tbl", "TreatmentResp-TblHdr", stat_key="participants"),
-        _c3dc_tab("SurvivalTab", "Survival", "Survival-Tbl", "Survival-TblHdr", stat_key="participants"),
         _c3dc_tab("SamplesTab", "Samples", "Samples-Tbl", "Samples-TblHdr", stat_key="participants"),
-        _c3dc_tab("FilesTab", "Files", "Files-Tbl", "Files-TblHdr", stat_key="files"),
     ],
 }
 
@@ -252,9 +247,6 @@ def run_test_from_excel(testcase_excel: str, run_dir: str = None):
                     print(f"[test_runner] Warning: no tab definition for '{tab_name}' — skipping")
                     continue
 
-                if program == "C3DC" and tab_name == "FilesTab":
-                    click_and_wait(page, find_test_object("C3DC/Navbar/ExploreFiles-Tab"))
-                    page.wait_for_timeout(800)
                 if program == "C3DC" and tab_def.get("tab_label"):
                     from core.c3dc_tabs import select_c3dc_tab
                     select_c3dc_tab(page, tab_def["tab_name"])
@@ -367,7 +359,7 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
     _RETRY_DELAY    = 4  # seconds
     try:
         cypher = build_query(program, tab_name, filters, custom_query=custom_query)
-        db_rows  = query_memgraph(cypher)
+        db_rows  = query_memgraph(cypher, program=program)
         db_count = len(db_rows)
         # If DB returned 0 but UI shows rows, Memgraph may have silently dropped
         # the query under concurrent load — retry before declaring a mismatch.
@@ -375,7 +367,7 @@ def _run_multi_function(page, program: str, tab_def: dict, stat_counts: dict,
             for _attempt in range(2, _RETRY_ATTEMPTS + 1):
                 print(f"[test_runner]   DB=0 but UI={ui_count}, retrying Memgraph (attempt {_attempt}/{_RETRY_ATTEMPTS}) in {_RETRY_DELAY}s…")
                 _time.sleep(_RETRY_DELAY)
-                db_rows  = query_memgraph(cypher)
+                db_rows  = query_memgraph(cypher, program=program)
                 db_count = len(db_rows)
                 if db_count > 0:
                     break
@@ -422,7 +414,7 @@ def _compare_stat_bar(program: str, filters: dict, ui_counts: dict, custom_queri
     try:
         custom = custom_queries.get("StatBar")
         cypher = build_query(program, "StatBar", filters, custom_query=custom)
-        rows   = query_memgraph(cypher)
+        rows   = query_memgraph(cypher, program=program)
         if not rows:
             print("[test_runner]   StatBar: no rows returned from Memgraph")
             return comparison

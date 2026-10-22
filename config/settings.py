@@ -180,10 +180,44 @@ def get_page_url(program: str, page: str) -> str:
 
 
 # ── Memgraph connection ───────────────────────────────────────────────────────
+# Global (CDS / default). Per-app: MEMGRAPH_HOST_C3DC, MEMGRAPH_PASSWORD_C3DC, …
 MEMGRAPH_HOST     = os.environ.get("MEMGRAPH_HOST",     "")
 MEMGRAPH_PORT     = int(os.environ.get("MEMGRAPH_PORT", "7687"))
 MEMGRAPH_USERNAME = os.environ.get("MEMGRAPH_USERNAME", "")
 MEMGRAPH_PASSWORD = os.environ.get("MEMGRAPH_PASSWORD", "")
+
+_C3DC_QA_HOST = "bolt://ccdi-dcc-qa-99d933a8c11c2ea3.elb.us-east-1.amazonaws.com"
+
+
+def get_memgraph_config(program: str | None = None) -> dict:
+    """Bolt settings for one commons app. C3DC must not reuse the CDS gen-dev NLB."""
+    prog = (program or "").upper()
+
+    def _first(*names: str, default: str = "") -> str:
+        for name in names:
+            val = os.environ.get(name)
+            if val:
+                return val
+        return default
+
+    if prog == "C3DC":
+        host = _first(
+            "MEMGRAPH_HOST_C3DC",
+            "MEMGRAPH_ENDPOINT_C3DC",
+            "memgraph_endpoint",
+            default=_C3DC_QA_HOST,
+        )
+        user = _first("MEMGRAPH_USERNAME_C3DC", "memgraph_username", default="memgraph")
+        password = _first("MEMGRAPH_PASSWORD_C3DC", "memgraph_password", default="")
+        port = int(_first("MEMGRAPH_PORT_C3DC", default=str(MEMGRAPH_PORT)))
+    else:
+        suffix = f"_{prog}" if prog else ""
+        host = _first(f"MEMGRAPH_HOST{suffix}", "MEMGRAPH_HOST", default=MEMGRAPH_HOST)
+        user = _first(f"MEMGRAPH_USERNAME{suffix}", "MEMGRAPH_USERNAME", default=MEMGRAPH_USERNAME)
+        password = _first(f"MEMGRAPH_PASSWORD{suffix}", "MEMGRAPH_PASSWORD", default=MEMGRAPH_PASSWORD)
+        port = int(_first(f"MEMGRAPH_PORT{suffix}", default=str(MEMGRAPH_PORT)))
+
+    return {"host": host, "port": port, "username": user, "password": password}
 
 # ── Browser settings ─────────────────────────────────────────────────────────
 BROWSER         = os.environ.get("BROWSER", "chromium")
