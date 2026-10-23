@@ -68,11 +68,48 @@ PROGRAM_TABS = {
         _c3dc_tab("DiagnosisTab", "Diagnosis", "Diagnosis-Tbl", "Diagnosis-TblHdr", stat_key="participants"),
         _c3dc_tab("SamplesTab", "Samples", "Samples-Tbl", "Samples-TblHdr", stat_key="participants"),
     ],
+    "ICDC": [
+        {
+            "tab_name":   "CasesTab",
+            "tab_btn":    "ICDC/CanineResults_Cases_Tab",
+            "table_body": "ICDC/Canine_CasesTable",
+            "table_hdr":  "ICDC/Canine_TableHeader",
+            "next_btn":   "ICDC/Canine_CasesTabNextBtn",
+            "stat_key":   "cases",
+        },
+        {
+            "tab_name":   "SamplesTab",
+            "tab_btn":    "ICDC/CanineResults_Samples_Tab",
+            "table_body": "ICDC/Canine_Samples_Table",
+            "table_hdr":  "ICDC/Canine_Samples_TableHdr",
+            "next_btn":   "ICDC/Canine_SamplesTabNextBtn",
+            "stat_key":   "samples",
+        },
+        {
+            "tab_name":   "CaseFilesTab",
+            "tab_btn":    "ICDC/CanineResults_CaseFiles_Tab",
+            "table_body": "ICDC/Canine_Files_Table",
+            "table_hdr":  "ICDC/Canine_Files_TableHdr",
+            "next_btn":   "ICDC/Canine_FilesTabNextBtn",
+            "stat_key":   "files",
+        },
+        {
+            "tab_name":   "StudyFilesTab",
+            "tab_btn":    "ICDC/CanineResults_StudyFiles_Tab",
+            "table_body": "ICDC/Canine_StudyFiles_Table",
+            "table_hdr":  "ICDC/Canine_StudyFiles_TableHdr",
+            "next_btn":   "ICDC/Canine_StudyFilesTabNextBtn",
+            "stat_key":   "study_files",
+        },
+    ],
 }
+
+PROGRAM_TABS["Canine"] = PROGRAM_TABS["ICDC"]
 
 PROGRAM_NAV_BTN = {
     "CDS":    "CDS/NavBar/CDS_Data-Btn",
-    "Canine": "Canine/NavBar/Canine_Data-Btn",
+    "ICDC":   "ICDC/NavBar/Canine_Cases_Btn",
+    "Canine": "ICDC/NavBar/Canine_Cases_Btn",
     "CTDC":   "CTDC/NavBar/CTDC_Data-Btn",
     "C3DC":   "C3DC/Navbar/Explore-Tab",
 }
@@ -202,10 +239,10 @@ def run_test_from_excel(testcase_excel: str, run_dir: str = None):
                     _wait_c3dc_explore_ready(page)
 
             elif action == "js_click_and_wait":
-                from core.actions import js_click
+                from core.actions import js_click, wait_network_idle
                 _ensure_facet_expanded(page, program, page_name, obj_name)
                 js_click(page, _xpath())
-                page.wait_for_load_state("networkidle", timeout=15000)
+                wait_network_idle(page)
 
             elif action == "js_click":
                 from core.actions import js_click
@@ -427,6 +464,15 @@ def _compare_stat_bar(program: str, filters: dict, ui_counts: dict, custom_queri
             "Samples":      "samples",
             "Files":        "files",
         }
+        if program in ("ICDC", "Canine"):
+            mapping = {
+                "Programs":     "programs",
+                "Studies":      "studies",
+                "Cases":        "cases",
+                "Samples":      "samples",
+                "Case Files":   "files",
+                "Study Files":  "study_files",
+            }
         for db_key, ui_key in mapping.items():
             db_val = db.get(db_key)
             ui_val = ui_counts.get(ui_key)
@@ -475,6 +521,9 @@ def _tab_to_stat_key(tab_name: str) -> str:
         "SamplesTab":      "samples",
         "FilesTab":        "files",
         "StudiesTab":      "studies",
+        "CasesTab":        "cases",
+        "CaseFilesTab":    "files",
+        "StudyFilesTab":   "study_files",
     }
     return mapping.get(tab_name, tab_name.lower().replace("tab", "").strip())
 
@@ -710,7 +759,26 @@ _FACET_EXPANDERS = {
         "Samples/SampleType": "C3DC/Filters/Samples/SampleType/SampleType_Ddn",
         "Diagnosis/Diagnosis": "C3DC/Filters/Diagnosis/Diagnosis/Diagnosis-Ddn",
     },
+    "ICDC": {
+        "Study/": "ICDC/Filter/Study/Canine_Filter_Study",
+        "StudyType/": "ICDC/Filter/StudyType/Canine_Filter_StudyType",
+        "Biobank/": "ICDC/Filter/Biobank/Biobank_Ddn",
+        "Breed/": "ICDC/Filter/Breed/BREED_Ddn",
+        "Diagnosis/": "ICDC/Filter/Diagnosis/DIAGNOSIS_Ddn",
+        "PrimDiseaseSite/": "ICDC/Filter/PrimDiseaseSite/PRIMARYDISEASESITE_Ddn",
+        "StageOfDisease/": "ICDC/Filter/StageOfDisease/STAGEOFDISEASE_Ddn",
+        "ResponseToTreatment/": "ICDC/Filter/ResponseToTreatment/RESPONSETOTREATMENT_Ddn",
+        "Sex/": "ICDC/Filter/Sex/SEX_Ddn",
+        "NeuteredStatus/": "ICDC/Filter/NeuteredStatus/NEUTEREDSTATUS_Ddn",
+        "SampleSite/": "ICDC/Filter/SampleSite/SAMPLE_SITE_Ddn",
+        "SampleType/": "ICDC/Filter/SampleType/SAMPLETYPE_Ddn",
+        "SamplePathology/": "ICDC/Filter/SamplePathology/SAMPLEPATHOLOGY_Ddn",
+        "FileAssociation/": "ICDC/Filter/FileAssociation/FILEASSOCIATION_Ddn",
+        "FileType/": "ICDC/Filter/FileType/FILETYPE_Ddn",
+        "FileFormat/": "ICDC/Filter/FileFormat/FILEFORMAT_Ddn",
+    },
 }
+_FACET_EXPANDERS["Canine"] = _FACET_EXPANDERS["ICDC"]
 
 def _wait_c3dc_explore_ready(page):
     """Explore Participants view — left filter panel (Study facet) must be visible."""

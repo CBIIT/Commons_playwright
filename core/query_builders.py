@@ -6,6 +6,8 @@ from __future__ import annotations
 _BUILDERS = {
     "CDS": "core.query_builder_cds",
     "C3DC": "core.query_builder_c3dc",
+    "ICDC": "core.query_builder_icdc",
+    "Canine": "core.query_builder_icdc",
 }
 
 

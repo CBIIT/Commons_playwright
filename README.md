@@ -11,7 +11,7 @@ Migrated from Katalon Studio — Excel-driven, environment-agnostic, zero hardco
 |---------|----------|
 | CDS     | https://general-qa.datacommons.cancer.gov |
 | C3DC    | https://clinicalcommons-qa.ccdi.cancer.gov |
-| Canine  | https://caninecommons.cancer.gov |
+| ICDC    | https://caninecommons-qa.cancer.gov |
 | CTDC    | https://clinical.datacommons.cancer.gov |
 
 ---
@@ -34,7 +34,7 @@ Commons_playwright/
 │   └── test_runner.py           # Excel-driven test orchestrator — main entry point
 ├── ObjectRepository/
 │   ├── CDS_ObjectRepository.xlsx
-│   ├── Canine_ObjectRepository.xlsx
+│   ├── ICDC_ObjectRepository.xlsx
 │   └── CTDC_ObjectRepository.xlsx
 ├── TestCases/
 │   └── TC01_CDS_phs001437_*.xlsx   # Sample test case Excel
@@ -171,3 +171,14 @@ run_test_from_excel('TestCases/TC01_CDS_phs001437_Sex-Unknown_ExperimentalStrate
 - **Run one TC:**  
   `ENV=qa python3 -c "from tests.test_runner import run_test_from_excel; run_test_from_excel('TestCases/C3DC/TC01_C3DC_phs000463_SexAtBirth-Female.xlsx')"`
 - **Run C3DC suite slice:** `python3 -m tests.run_suite --dir TestCases/C3DC` or `--filter C3DC_phs000463`
+
+### ICDC (Explore / Cases)
+
+Katalon stored locators under `Object Repository/Canine`; Playwright uses program name **ICDC**.
+
+- **Object repo:** `python3 tools/import_icdc_or.py` → `ObjectRepository/ICDC_ObjectRepository.xlsx`
+- **Sample TCs:** `python3 tools/build_icdc_testcases.py` → `TestCases/ICDC/<study>/TC##_ICDC_*.xlsx`
+- **Neo4j:** ICDC uses Neo4j Bolt (`NEO4J_ENDPOINT_ICDC` / `NEO4J_PASSWORD_ICDC`), not the CDS Memgraph NLB
+- **Run one TC:**  
+  `ENV=qa python3 -c "from tests.test_runner import run_test_from_excel; run_test_from_excel('TestCases/ICDC/UC01/TC01_ICDC_UC01_StudyType-Genomics.xlsx')"`
+- **Run ICDC suite slice:** `python3 -m tests.run_suite --dir TestCases/ICDC`

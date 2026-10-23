@@ -160,23 +160,25 @@ def read_stat_bar_bento(page: Page) -> dict:
     }
 
 
-def read_stat_bar_canine(page: Page) -> dict:
+def read_stat_bar_icdc(page: Page) -> dict:
     """
-    Read stat bar counts for Canine program.
-    Replaces: readStatBarCanine() in TestRunner.groovy.
+    Read stat bar counts for ICDC (Katalon: readStatBarCanine).
 
     Returns:
         dict: { 'programs': int, 'studies': int, 'cases': int,
                 'samples': int, 'files': int, 'study_files': int }
     """
     return {
-        "programs":    _read_stat(page, "Canine/StatBar/Canine_StatBar-Programs"),
-        "studies":     _read_stat(page, "Canine/StatBar/Canine_StatBar-Studies"),
-        "cases":       _read_stat(page, "Canine/StatBar/Canine_StatBar-Cases"),
-        "samples":     _read_stat(page, "Canine/StatBar/Canine_StatBar-Samples"),
-        "files":       _read_stat(page, "Canine/StatBar/Canine_StatBar-CaseFiles"),
-        "study_files": _read_stat(page, "Canine/StatBar/Canine_StatBar-StudyFiles"),
+        "programs":    _read_stat(page, "ICDC/StatBar/Canine_StatBar-Programs"),
+        "studies":     _read_stat(page, "ICDC/StatBar/Canine_StatBar-Studies"),
+        "cases":       _read_stat(page, "ICDC/StatBar/Canine_StatBar-Cases"),
+        "samples":     _read_stat(page, "ICDC/StatBar/Canine_StatBar-Samples"),
+        "files":       _read_stat(page, "ICDC/StatBar/Canine_StatBar-CaseFiles"),
+        "study_files": _read_stat(page, "ICDC/StatBar/Canine_StatBar-StudyFiles"),
     }
+
+
+read_stat_bar_canine = read_stat_bar_icdc
 
 
 # ── Dispatcher ────────────────────────────────────────────────────────────────
@@ -188,7 +190,8 @@ _READERS = {
     "CTDC":   read_stat_bar_ctdc,
     "INS":    read_stat_bar_ins,
     "Bento":  read_stat_bar_bento,
-    "Canine": read_stat_bar_canine,
+    "ICDC":   read_stat_bar_icdc,
+    "Canine": read_stat_bar_icdc,
 }
 
 
@@ -200,7 +203,7 @@ def read_stat_bar(page: Page, program: str, retries: int = 3, retry_delay_ms: in
 
     Args:
         page:           Playwright Page object
-        program:        Program name e.g. 'CDS', 'CCDI', 'Canine'
+        program:        Program name e.g. 'CDS', 'CCDI', 'ICDC'
         retries:        Max number of attempts (default 3)
         retry_delay_ms: Delay between retries in ms (default 2000)
 
@@ -219,7 +222,8 @@ def read_stat_bar(page: Page, program: str, retries: int = 3, retry_delay_ms: in
 
     prev_counts = None
     for attempt in range(retries):
-        page.wait_for_load_state("networkidle", timeout=15000)
+        from core.actions import wait_network_idle
+        wait_network_idle(page)
         counts = reader(page)
         if counts == prev_counts:
             # Counts haven't changed — they have stabilised
