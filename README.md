@@ -1,184 +1,270 @@
 # Commons Playwright Framework
 
-Python + Playwright test automation framework for CBIIT NCI Data Commons programs.  
-Migrated from Katalon Studio — Excel-driven, environment-agnostic, zero hardcoding.
+Python + Playwright automation for CBIIT NCI Data Commons portals.
+
+Excel-driven, environment-agnostic, and designed so testers add cases without changing Python. Migrated from Katalon Studio: same object paths and step style, new runner and per-app Cypher comparison.
 
 ---
 
-## Programs Supported
+## Architecture
 
-| Program | URL (QA) |
-|---------|----------|
-| CDS     | https://general-qa.datacommons.cancer.gov |
-| C3DC    | https://clinicalcommons-qa.ccdi.cancer.gov |
-| ICDC    | https://caninecommons-qa.cancer.gov |
-| CTDC    | https://clinical.datacommons.cancer.gov |
+Testers own **Excel**. The runner owns **browser + graph compare**. URLs, locators, and Cypher templates never live in test steps.
 
----
+```mermaid
+flowchart TB
+  subgraph testers [What testers edit]
+    TC["Test Case Excel<br/>Steps + Filter column"]
+    OR["Object Repository Excel<br/>Lookup Key → XPath"]
+  end
 
-## Repository Structure
+  subgraph runner [test_runner.py]
+    CFG["settings.py<br/>ENV, URLs, Bolt hosts"]
+    ACT["actions / browser<br/>Playwright"]
+    STAT["stat_bar + table_reader<br/>UI counts and rows"]
+    QB["query_builders.py<br/>CDS · C3DC · ICDC"]
+    DB["memgraph_reader.py<br/>Bolt / Neo4j driver"]
+    OUT["Reports/*.xlsx<br/>PASS / FAIL"]
+  end
 
-```
-Commons_playwright/
-├── config/
-│   └── settings.py              # All URLs and environment config — one place
-├── core/
-│   ├── object_repo.py           # XPath lookup from Object Repository Excel files
-│   ├── actions.py               # Playwright actions (click, js_click, scroll, etc.)
-│   ├── browser.py               # Browser launch / close
-│   ├── table_reader.py          # Paginate result tables, collect rows
-│   ├── stat_bar.py              # Read and validate stat bar counts
-│   ├── excel_reader.py          # Read study input Excel, compare web vs TSV data
-│   └── python_runner.py         # Run ResultTabs.py and Statbar.py as subprocesses
-├── tests/
-│   └── test_runner.py           # Excel-driven test orchestrator — main entry point
-├── ObjectRepository/
-│   ├── CDS_ObjectRepository.xlsx
-│   ├── ICDC_ObjectRepository.xlsx
-│   └── CTDC_ObjectRepository.xlsx
-├── TestCases/
-│   └── TC01_CDS_phs001437_*.xlsx   # Sample test case Excel
-└── Object_Repository.xlsx       # Original Katalon source (reference)
-```
+  subgraph apps [Commons apps]
+    UI["Portal UI<br/>CDS · C3DC · ICDC"]
+    GRAPH["Graph DB<br/>Memgraph or Neo4j"]
+  end
 
----
-
-## How It Works
-
-### Excel is the only driver
-
-Every test is defined in a **Test Case Excel** with two sheets:
-
-**Config sheet**
-
-| Key | Value |
-|-----|-------|
-| Test Case ID | TC01_CDS_phs001437_... |
-| Program | CDS |
-| Input Excel | InputFiles/CDS/TC01_... .xlsx |
-| Max Pages | 5 |
-
-**Steps sheet** — one row per action
-
-| # | Action | Page | Object Name | Params | Notes |
-|---|--------|------|-------------|--------|-------|
-| 1 | dismiss_popup | | | | |
-| 2 | click_and_wait | NavBar | CDS_Data-Btn | | Click Data nav |
-| 3 | click_and_wait | Data_page | Filter/StudyFacet/PHS_Accession/PHS_Accession_Ddn | | Expand filter |
-| 4 | js_click_and_wait | Data_page | Filter/StudyFacet/PHS_Accession/phs001437_Chkbx | | Select study |
-| 9 | read_stat_bar | | | CDS | Read counts |
-| 10 | multi_function | | | ParticipantsTab | Paginate + compare |
-
-The runner builds the XPath lookup key as `{Program}/{Page}/{Object Name}` and looks it up in the Object Repository.
-
----
-
-## Object Repository
-
-Each program has its own Excel file in `ObjectRepository/`, with **one sheet per app page**.
-
-| Column | Description |
-|--------|-------------|
-| Lookup Key | Full Katalon-style path e.g. `CDS/NavBar/CDS_Data-Btn` |
-| Object Name | Short name e.g. `CDS_Data-Btn` |
-| XPath | XPath expression used by Playwright |
-
----
-
-## Environment Configuration
-
-All URLs live in `config/settings.py` — **no URLs in Test Case Excel files**.
-
-```python
-# Run against QA (default)
-python3 -c "from tests.test_runner import run_test_from_excel; run_test_from_excel('TestCases/TC01_CDS_phs001437_*.xlsx')"
-
-# Run against prod
-ENV=prod python3 -c "..."
-
-# Run headless (for CI/CD)
-HEADLESS=true ENV=prod python3 -c "..."
+  TC --> runner
+  OR --> ACT
+  CFG --> ACT
+  CFG --> DB
+  ACT --> UI
+  STAT --> UI
+  QB --> DB
+  DB --> GRAPH
+  STAT --> OUT
+  DB --> OUT
 ```
 
-### Environment variables
+### Runtime flow (one test case)
 
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `ENV` | `qa` | Target environment: `qa`, `prod`, `stage` |
-| `HEADLESS` | `false` | Run browser headless |
-| `BROWSER` | `chromium` | Browser: `chromium`, `firefox`, `webkit` |
-| `URL_CDS_QA` | (set in settings.py) | Override any URL per program+env |
-| `COMMONS_ROOT` | `/Users/lollal/New_Framework/Commons_Automation` | Root for InputFiles / OutputFiles |
+```mermaid
+sequenceDiagram
+  participant Excel as Test Case Excel
+  participant Runner as test_runner
+  participant UI as Commons UI
+  participant QB as Query builder
+  participant DB as Graph (Bolt)
+
+  Excel->>Runner: Program, steps, Filter key=value
+  Runner->>UI: Open QA/stage/prod URL
+  loop Each step
+    Runner->>UI: click / js_click / expand facet
+  end
+  Runner->>UI: Read stat bar + paginate tabs
+  Runner->>QB: filters + tab name
+  QB->>DB: Cypher (per-app template)
+  DB-->>Runner: expected counts / IDs
+  Runner->>Excel: Reports workbook PASS or FAIL
+```
+
+| Layer | Responsibility | Code |
+|--------|----------------|------|
+| Test case | What to click and which filters to apply | `TestCases/**/*.xlsx` |
+| Object repository | `{Program}/{Page}/{Object}` → XPath | `ObjectRepository/<Program>_ObjectRepository.xlsx` |
+| Config | URLs and DB endpoints; no URLs in Excel | `config/settings.py`, `.env` |
+| Orchestrator | Execute steps, collect filters, compare | `tests/test_runner.py` |
+| UI | Playwright clicks, tables, stat bar | `core/actions.py`, `core/stat_bar.py`, `core/table_reader.py` |
+| Expected data | Per-app Cypher from the Filter column | `core/query_builder_cds.py`, `query_builder_c3dc.py`, `query_builder_icdc.py` |
+| Graph | CDS/C3DC = Memgraph; ICDC = Neo4j | `core/memgraph_reader.py` |
+
+**Rule:** one program = one object repo + one query builder + one Bolt cluster. CDS must not query the ICDC graph, and ICDC must not query the CDS Memgraph NLB.
 
 ---
 
-## Available Actions
+## Why this exists
 
-| Action | Description |
-|--------|-------------|
-| `dismiss_popup` | Dismiss warning popup — always first step |
-| `navigate_to` | Navigate to a page by name (uses `get_page_url`) |
-| `click_and_wait` | Click element + wait for networkidle |
-| `js_click_and_wait` | JavaScript click + wait — for MUI checkboxes |
-| `click_element` | Click element, no wait |
-| `js_click` | JavaScript click only |
-| `scroll_into_view` | Scroll element into viewport |
-| `wait_for_element_hidden` | Wait until element disappears |
-| `is_element_visible` | Assert element is visible |
-| `is_element_enabled` | Assert element is enabled |
-| `clear_input` | Clear a text input |
-| `find_filter_by_search` | Type into a filter search box |
-| `read_stat_bar` | Read stat bar counts (Params = program name) |
-| `multi_function` | Paginate table + run SQL scripts + compare results |
-| `login` | SSO login (Params = `email,password`) |
-| `verify_static_page` | Verify static page text |
+| Katalon (legacy) | Commons Playwright |
+|------------------|--------------------|
+| Groovy scripts per TC | One runner; Excel is the script |
+| Object Repository `.rs` trees | Per-program Excel, same lookup keys |
+| CDS: Memgraph; ICDC: TSV / Neo4j mix | Same compare path: UI vs live graph |
+| Hard to run headless / CI | `HEADLESS`, `ENV`, suite runner |
+
+Testers still write Katalon-style steps. Engineers own locators, Cypher templates, and environment wiring.
 
 ---
 
-## Running a Test
+## Programs
+
+| Program | Portal (QA) | Expected data | Result tabs |
+|---------|-------------|---------------|-------------|
+| **CDS** | [general-qa.datacommons.cancer.gov](https://general-qa.datacommons.cancer.gov) | Memgraph | Participants, Samples, Files |
+| **C3DC** | [clinicalcommons-qa.ccdi.cancer.gov](https://clinicalcommons-qa.ccdi.cancer.gov) | Memgraph (C3DC cluster) | Participants, Studies, Diagnosis, Samples |
+| **ICDC** | [caninecommons-qa.cancer.gov](https://caninecommons-qa.cancer.gov) | Neo4j | Cases, Samples, Case Files, Study Files |
+| **CTDC** | [clinical.datacommons.cancer.gov](https://clinical.datacommons.cancer.gov) | Object repo present | Wiring in progress |
+
+ICDC was stored as **Canine** in Katalon. This repo uses **ICDC** everywhere (OR keys, Program column, runner). `Canine` still resolves as an alias.
+
+---
+
+## How a tester writes a case
+
+Every workbook has a **Steps** sheet.
+
+**Row 2 — config**
+
+| Program | Input Excel | Max Pages |
+|---------|-------------|-----------|
+| `ICDC` | `InputFiles/ICDC/TC01_….xlsx` | `2` |
+
+**Row 3+ — steps**
+
+| Action | Page | Object Name | Params | Filter |
+|--------|------|-------------|--------|--------|
+| `dismiss_popup` | | | | |
+| `click_and_wait` | `NavBar` | `Canine_Cases_Btn` | | |
+| `js_click_and_wait` | `Filter` | `Study/UC01_Chkbx` | | `study=UC01` |
+| `js_click_and_wait` | `Filter` | `StudyType/…Genomics_Chkbx` | | `study_type=Genomics` |
+| `read_stat_bar` | | | `ICDC` | |
+| `multi_function` | | | `CasesTab` | |
+
+The runner builds `ICDC/Filter/Study/UC01_Chkbx`, looks it up in the object repo, and later sends `{study: [UC01], study_type: [Genomics]}` to the ICDC query builder.
+
+Optional **Queries** sheet: Tab name + full Cypher override (used when a template is not enough).
+
+---
+
+## Demo: run a test
+
+From the `Commons_playwright` repo root. First time only:
 
 ```bash
-cd /path/to/Commons_playwright
-
-# Install dependencies (first time)
-pip install playwright openpyxl
+pip install playwright openpyxl neo4j python-dotenv
 playwright install chromium
+```
 
-# Run a test case
-python3 -c "
+Put Bolt passwords in gitignored `.env` (`MEMGRAPH_PASSWORD_*`, `NEO4J_PASSWORD_ICDC`).
+
+**ICDC (headed — good for a live demo)**
+
+```bash
+HEADLESS=false ENV=qa python3 -c "
+from tests.test_runner import run_test_from_excel
+run_test_from_excel('TestCases/ICDC/UC01/TC01_ICDC_UC01_StudyType-Genomics.xlsx')
+"
+```
+
+**C3DC**
+
+```bash
+HEADLESS=false ENV=qa python3 -c "
+from tests.test_runner import run_test_from_excel
+run_test_from_excel('TestCases/C3DC/TC01_C3DC_phs000463_SexAtBirth-Female.xlsx')
+"
+```
+
+**CDS**
+
+```bash
+HEADLESS=false ENV=qa python3 -c "
 from tests.test_runner import run_test_from_excel
 run_test_from_excel('TestCases/TC01_CDS_phs001437_Sex-Unknown_ExperimentalStrategy-RNASeq.xlsx')
 "
 ```
 
+**Suite slice**
+
+```bash
+python3 -m tests.run_suite --dir TestCases/ICDC
+python3 -m tests.run_suite --dir TestCases/C3DC --filter phs000463
+```
+
+| Variable | Default | Meaning |
+|----------|---------|---------|
+| `ENV` | `qa` | `qa`, `stage`, or `prod` |
+| `HEADLESS` | `true` | `false` to watch the browser |
+| `BROWSER` | `chromium` | `chromium`, `firefox`, `webkit` |
+
+Reports land in `Reports/`. Each run writes a workbook with filters, UI vs graph stat bar, and per-tab PASS/FAIL.
+
 ---
 
-## Adding a New Program
+## Repository map
 
-1. Browse the program's app, note all page URLs
-2. Create `ObjectRepository/<Program>_ObjectRepository.xlsx` — one sheet per page
-3. Add the program's URLs to `config/settings.py` under `_BASE_URLS` and page paths under `_PAGE_PATHS`
-4. Add tab definitions to `PROGRAM_TABS` in `tests/test_runner.py`
-5. Create a Test Case Excel in `TestCases/`
+```
+Commons_playwright/
+├── config/settings.py                 # URLs + per-app Bolt config
+├── core/
+│   ├── object_repo.py                 # find_test_object(lookup_key)
+│   ├── actions.py / browser.py
+│   ├── stat_bar.py / table_reader.py
+│   ├── memgraph_reader.py             # Neo4j driver (Memgraph + Neo4j)
+│   ├── query_builders.py              # dispatch by program
+│   ├── query_builder_cds.py
+│   ├── query_builder_c3dc.py
+│   └── query_builder_icdc.py
+├── tests/
+│   ├── test_runner.py                 # single TC
+│   └── run_suite.py                   # batch
+├── ObjectRepository/
+│   ├── CDS_ObjectRepository.xlsx
+│   ├── C3DC_ObjectRepository.xlsx
+│   ├── ICDC_ObjectRepository.xlsx
+│   └── CTDC_ObjectRepository.xlsx
+├── TestCases/
+│   ├── TC##_CDS_*.xlsx
+│   ├── C3DC/
+│   └── ICDC/<study>/
+├── tools/
+│   ├── import_katalon_or.py
+│   ├── import_commons_or.py           # C3DC YAML
+│   ├── import_icdc_or.py
+│   ├── build_c3dc_testcases.py
+│   └── build_icdc_testcases.py
+└── Reports/                           # generated (gitignored)
+```
 
-### C3DC (Explore Participants)
+---
 
-- **Object repo (preferred):** sync from `commons-automation` YAML (updated Explore nav, tabs, filters):
-  `python tools/import_commons_or.py C3DC ../commons-automation/ObjectRepository/C3DC`
-- **Object repo (legacy Katalon .rs):** `python tools/import_katalon_or.py C3DC "../Commons_Automation/Object Repository/C3DC"`
-- **Sample TCs:** `python tools/build_c3dc_testcases.py` → `TestCases/C3DC/TC01_C3DC_*.xlsx`
-- **Memgraph:** C3DC QA often uses a **different** Bolt endpoint than CDS — set `MEMGRAPH_HOST` / credentials in `.env` before running (see `commons-automation/config/environments.yaml` → `apps.C3DC.memgraph`).
-- **Run one TC:**  
-  `ENV=qa python3 -c "from tests.test_runner import run_test_from_excel; run_test_from_excel('TestCases/C3DC/TC01_C3DC_phs000463_SexAtBirth-Female.xlsx')"`
-- **Run C3DC suite slice:** `python3 -m tests.run_suite --dir TestCases/C3DC` or `--filter C3DC_phs000463`
+## Refresh locators or generate cases
 
-### ICDC (Explore / Cases)
+| Task | Command |
+|------|---------|
+| Import CDS/CTDC from Katalon `.rs` | `python3 tools/import_katalon_or.py CDS "../Commons_Automation/Object Repository/CDS"` |
+| Import C3DC from pytest YAML | `python3 tools/import_commons_or.py C3DC ../commons-automation/ObjectRepository/C3DC` |
+| Import ICDC (Katalon Canine + YAML overlay) | `python3 tools/import_icdc_or.py` |
+| Rebuild C3DC sample Excels | `python3 tools/build_c3dc_testcases.py` |
+| Rebuild ICDC TC01–TC07 per study | `python3 tools/build_icdc_testcases.py` |
 
-Katalon stored locators under `Object Repository/Canine`; Playwright uses program name **ICDC**.
+---
 
-- **Object repo:** `python3 tools/import_icdc_or.py` → `ObjectRepository/ICDC_ObjectRepository.xlsx`
-- **Sample TCs:** `python3 tools/build_icdc_testcases.py` → `TestCases/ICDC/<study>/TC##_ICDC_*.xlsx`
-- **Neo4j:** ICDC uses Neo4j Bolt (`NEO4J_ENDPOINT_ICDC` / `NEO4J_PASSWORD_ICDC`), not the CDS Memgraph NLB
-- **Run one TC:**  
-  `ENV=qa python3 -c "from tests.test_runner import run_test_from_excel; run_test_from_excel('TestCases/ICDC/UC01/TC01_ICDC_UC01_StudyType-Genomics.xlsx')"`
-- **Run ICDC suite slice:** `python3 -m tests.run_suite --dir TestCases/ICDC`
+## Add a new program
+
+1. Capture page URLs and add them under `_BASE_URLS` / `_PAGE_PATHS` in `config/settings.py`.
+2. Import or create `ObjectRepository/<Program>_ObjectRepository.xlsx`.
+3. Add `PROGRAM_TABS` and facet expanders in `tests/test_runner.py`.
+4. Add `core/query_builder_<app>.py` and register it in `query_builders.py`.
+5. Point `get_memgraph_config` at that app’s Bolt cluster.
+6. Add Excel TCs under `TestCases/`.
+
+---
+
+## Common actions
+
+| Action | Use |
+|--------|-----|
+| `dismiss_popup` | First step on every case |
+| `click_and_wait` | Nav and facet headers |
+| `js_click_and_wait` | MUI checkboxes |
+| `read_stat_bar` | Params = program (`CDS`, `C3DC`, `ICDC`) |
+| `multi_function` | Params = tab (`CasesTab`, `ParticipantsTab`, …) |
+| `navigate_to` | Page name from settings (no raw URL) |
+| `login` | Params = `email,password` |
+
+---
+
+## Talking points for a demo
+
+1. **Open an Excel TC** — show Program, Filter column, and that there is no URL in the file.
+2. **Open the matching object repo** — show `ICDC/NavBar/Canine_Cases_Btn` → XPath.
+3. **Run headed** — banner dismiss, Explore, study + facet, stat bar, four tabs.
+4. **Show the report** — UI counts next to graph counts; tab PASS/FAIL.
+5. **Call out isolation** — CDS Memgraph, C3DC Memgraph, ICDC Neo4j are separate.
