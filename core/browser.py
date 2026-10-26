@@ -3,7 +3,7 @@ browser.py
 Playwright browser lifecycle — launch, new page, close.
 Replaces WebUI.openBrowser() / WebUI.closeBrowser() from Katalon.
 """
-from playwright.sync_api import sync_playwright, Playwright, Browser, Page
+from playwright.sync_api import sync_playwright, Playwright, Browser, Page, TimeoutError as PlaywrightTimeoutError
 from config.settings import BROWSER, HEADLESS, DEFAULT_TIMEOUT
 
 
@@ -29,7 +29,7 @@ def launch_browser(headless: bool = HEADLESS,
     else:
         browser = playwright.chromium.launch(headless=headless)
 
-    page = browser.new_page()
+    page = browser.new_page(viewport={"width": 1920, "height": 1080})
     page.set_default_timeout(DEFAULT_TIMEOUT)
 
     return playwright, browser, page
@@ -72,4 +72,12 @@ def navigate_to(page: Page, url: str):
         page: Playwright Page object
         url:  Full URL to navigate to
     """
-    page.goto(url, wait_until="networkidle")
+    try:
+        page.goto(url, wait_until="networkidle")
+    except PlaywrightTimeoutError:
+        # ICDC/Canine (and some other SPAs) keep a long-lived connection, so
+        # networkidle never fires. The document is usually already loaded.
+        if page.url.startswith("http"):
+            print(f"[browser] networkidle timeout after goto {url} — continuing ({page.url})")
+        else:
+            raise

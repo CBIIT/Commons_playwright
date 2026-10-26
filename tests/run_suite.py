@@ -30,7 +30,7 @@ from tests.test_runner import run_test_from_excel
 def find_tc_files(tc_dir: str, name_filter: str = "", limit: int = 0) -> list[str]:
     """Return sorted list of TC Excel paths in tc_dir, optionally filtered and limited."""
     tc_dir = Path(tc_dir)
-    files = sorted(tc_dir.glob("TC*.xlsx"))
+    files = sorted(tc_dir.rglob("TC*.xlsx"))
     if name_filter:
         files = [f for f in files if name_filter.lower() in f.name.lower()]
     if limit > 0:

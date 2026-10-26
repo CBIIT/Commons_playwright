@@ -40,7 +40,8 @@ def set_page_size(page: Page, size: int = DEFAULT_PAGE_SIZE):
         ).first
         dropdown.wait_for(state="visible", timeout=5000)
         dropdown.select_option(str(size))
-        page.wait_for_load_state("networkidle", timeout=DEFAULT_TIMEOUT)
+        from core.actions import wait_network_idle
+        wait_network_idle(page, timeout=DEFAULT_TIMEOUT)
     except PlaywrightTimeoutError:
         # Some program pages don't have a rows-per-page selector — skip silently
         pass
@@ -168,7 +169,8 @@ def click_next_page(page: Page, next_btn_xpath: str) -> bool:
         return False
 
     page.locator(f"xpath={next_btn_xpath}").first.click()
-    page.wait_for_load_state("networkidle", timeout=DEFAULT_TIMEOUT)
+    from core.actions import wait_network_idle
+    wait_network_idle(page, timeout=DEFAULT_TIMEOUT)
     return True
 
 

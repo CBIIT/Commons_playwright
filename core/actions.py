@@ -8,11 +8,24 @@ Every function takes an XPath (already resolved via find_test_object) and a Play
 from playwright.sync_api import Page, TimeoutError as PlaywrightTimeoutError
 from config.settings import DEFAULT_TIMEOUT
 
-# XPath for the popup that appears on every page load — same across all programs
-_POPUP_CONTINUE_XPATH = "//span[contains(text(),'Continue')]"
+# Warning banner / landing dialog — ICDC uses a button, CDS often wraps Continue in a span.
+_POPUP_CONTINUE_XPATHS = (
+    "//div[contains(@class,'MuiDialog')]//span[contains(text(),'Continue')]",
+    "//div[contains(@class,'MuiDialog')]//button[contains(.,'Continue')]",
+    "//span[contains(text(),'Continue')]",
+    "//*[contains(text(),'Continue') and (self::button or self::span)]",
+)
 
 # Wait for network idle after a filter click — same behaviour as Katalon's waitForAngular
 _NETWORK_IDLE_TIMEOUT = 15000  # ms
+
+
+def wait_network_idle(page: Page, timeout: int = _NETWORK_IDLE_TIMEOUT) -> None:
+    """Wait for networkidle; ICDC/Canine SPAs often never go idle, so swallow timeout."""
+    try:
+        page.wait_for_load_state("networkidle", timeout=timeout)
+    except PlaywrightTimeoutError:
+        pass
 
 
 def dismiss_popup(page: Page):
@@ -25,18 +38,30 @@ def dismiss_popup(page: Page):
         page: Playwright Page object
     """
     try:
-        locator = page.locator(f"xpath={_POPUP_CONTINUE_XPATH}")
-        locator.wait_for(state="visible", timeout=10000)
-        # JS click bypasses the MuiDialog overlay that intercepts regular pointer events
-        locator.evaluate("el => el.click()")
-        # Wait for all MuiDialog containers to disappear before any subsequent click
+        clicked = False
+        for xp in _POPUP_CONTINUE_XPATHS:
+            loc = page.locator(f"xpath={xp}").first
+            try:
+                loc.wait_for(state="visible", timeout=4000)
+                loc.evaluate("el => el.click()")
+                clicked = True
+                break
+            except PlaywrightTimeoutError:
+                continue
+        if not clicked:
+            return
         page.wait_for_function(
             "() => document.querySelectorAll('[class*=\"MuiDialog-container\"]').length === 0",
-            timeout=10000,
+            timeout=15000,
         )
     except PlaywrightTimeoutError:
-        # Popup not present on this page load — that is fine, continue
-        pass
+        # Popup not present, or dialog animation is slow — force-hide leftover overlay
+        page.evaluate(
+            """() => {
+              document.querySelectorAll('[class*="MuiDialog-root"], [class*="MuiBackdrop-root"]')
+                .forEach(el => { el.style.display = 'none'; });
+            }"""
+        )
 
 
 def click_element(page: Page, xpath: str):
@@ -65,15 +90,18 @@ def click_and_wait(page: Page, xpath: str):
         xpath: XPath string from find_test_object()
     """
     # Wait for network to settle first so React has finished re-rendering
-    page.wait_for_load_state("networkidle", timeout=_NETWORK_IDLE_TIMEOUT)
+    wait_network_idle(page)
     # Re-locate fresh — stale handles from before networkidle are discarded
     loc = page.locator(f"xpath={xpath}").first
     loc.wait_for(state="visible", timeout=DEFAULT_TIMEOUT)
     # JS scroll avoids "not attached" errors when React re-renders mid-action
     loc.evaluate("el => el.scrollIntoView({block: 'center'})")
-    loc.click()
+    try:
+        loc.click()
+    except PlaywrightTimeoutError:
+        loc.evaluate("el => el.click()")
     # Wait for React to re-render after the click
-    page.wait_for_load_state("networkidle", timeout=_NETWORK_IDLE_TIMEOUT)
+    wait_network_idle(page)
 
 
 def _scroll_virtual_list_to_reveal(page: Page, xpath: str, max_attempts: int = 50) -> bool:

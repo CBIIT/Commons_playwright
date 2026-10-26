@@ -19,13 +19,29 @@ OBJECT_REPO_DIR = os.path.join(
     "ObjectRepository"
 )
 
-# { 'CDS': {'CDS/NavBar/CDS_Data-Btn': '//xpath', ...}, 'Canine': {...}, ... }
+# { 'CDS': {'CDS/NavBar/CDS_Data-Btn': '//xpath', ...}, 'ICDC': {...}, ... }
 _repo: dict = {}
+
+# Katalon folder name was Canine; Playwright program name is ICDC.
+_PROGRAM_ALIASES = {"Canine": "ICDC"}
+
+
+def _canonical_program(program: str) -> str:
+    return _PROGRAM_ALIASES.get(program, program)
+
+
+def _canonical_lookup(lookup_key: str) -> str:
+    if lookup_key.startswith("Canine/"):
+        return "ICDC/" + lookup_key[len("Canine/"):]
+    return lookup_key
 
 
 def _load_program(program: str) -> dict:
     """Load one program's Excel file — all sheets — into a flat lookup dict."""
+    program = _canonical_program(program)
     path = os.path.join(OBJECT_REPO_DIR, f"{program}_ObjectRepository.xlsx")
+    if not os.path.exists(path) and program == "ICDC":
+        path = os.path.join(OBJECT_REPO_DIR, "Canine_ObjectRepository.xlsx")
     if not os.path.exists(path):
         raise FileNotFoundError(
             f"No Object Repository found for program '{program}': {path}"
@@ -43,7 +59,14 @@ def _load_program(program: str) -> dict:
             lk = row[lk_col]
             xp = row[xp_col]
             if lk and xp:
-                objects[str(lk).strip()] = str(xp).strip()
+                key = str(lk).strip()
+                xpath = str(xp).strip()
+                objects[key] = xpath
+                # Katalon used Canine/; Playwright program name is ICDC.
+                if key.startswith("Canine/"):
+                    objects["ICDC/" + key[len("Canine/"):]] = xpath
+                elif key.startswith("ICDC/"):
+                    objects["Canine/" + key[len("ICDC/"):]] = xpath
     wb.close()
     return objects
 
@@ -54,13 +77,14 @@ def load_object_repo(program: str = None) -> dict:
     Results are cached — safe to call multiple times.
 
     Args:
-        program: e.g. 'CDS', 'Canine', 'CTDC', or None to load all found files.
+        program: e.g. 'CDS', 'ICDC', 'CTDC', or None to load all found files.
 
     Returns:
         dict: { lookup_key: xpath, ... } for the requested scope.
     """
     global _repo
     if program:
+        program = _canonical_program(program)
         if program not in _repo:
             _repo[program] = _load_program(program)
         return _repo[program]
@@ -95,9 +119,11 @@ def find_test_object(lookup_key: str, program: str = None) -> str:
         KeyError:   lookup_key not found in the repository
         FileNotFoundError: program's Excel file does not exist
     """
+    lookup_key = _canonical_lookup(lookup_key)
     # Derive program from lookup key prefix if not given
     if not program:
         program = lookup_key.split("/")[0]
+    program = _canonical_program(program)
 
     # Lazy-load this program if not yet in cache
     if program not in _repo:
@@ -113,6 +139,7 @@ def find_test_object(lookup_key: str, program: str = None) -> str:
 
 def get_all_objects_for_program(program: str) -> dict:
     """Return all objects for a program as { lookup_key: xpath }."""
+    program = _canonical_program(program)
     if program not in _repo:
         _repo[program] = _load_program(program)
     return dict(_repo[program])
@@ -122,6 +149,7 @@ def reload_object_repo(program: str = None):
     """Force reload — evicts cache for one program (or all if None)."""
     global _repo
     if program:
+        _repo.pop(_canonical_program(program), None)
         _repo.pop(program, None)
     else:
         _repo.clear()

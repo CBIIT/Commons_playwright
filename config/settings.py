@@ -9,6 +9,13 @@ To run against prod:  export ENV=prod
 To run against stage: export ENV=stage
 """
 import os
+from pathlib import Path
+
+try:
+    from dotenv import load_dotenv
+    load_dotenv(Path(__file__).resolve().parent.parent / ".env")
+except ImportError:
+    pass
 
 # ── Active environment ────────────────────────────────────────────────────────
 # Set ENV=prod or ENV=stage on CI/CD. Default is qa.
@@ -57,9 +64,9 @@ _BASE_URLS = {
         "stage":os.environ.get("URL_CCDI_STAGE", ""),
     },
     "C3DC": {
-        "qa":   os.environ.get("URL_C3DC_QA",   ""),
-        "prod": os.environ.get("URL_C3DC_PROD",  ""),
-        "stage":os.environ.get("URL_C3DC_STAGE", ""),
+        "qa":   os.environ.get("URL_C3DC_QA",   "https://clinicalcommons-qa.ccdi.cancer.gov"),
+        "prod": os.environ.get("URL_C3DC_PROD",  "https://clinicalcommons.ccdi.cancer.gov"),
+        "stage":os.environ.get("URL_C3DC_STAGE", "https://clinicalcommons-stage.ccdi.cancer.gov"),
     },
     "CTDC": {
         "qa":   os.environ.get("URL_CTDC_QA",   "https://clinical.datacommons.cancer.gov"),
@@ -77,9 +84,14 @@ _BASE_URLS = {
         "stage":os.environ.get("URL_BENTO_STAGE", ""),
     },
     "Canine": {
-        "qa":   os.environ.get("URL_CANINE_QA",   "https://caninecommons.cancer.gov"),
+        "qa":   os.environ.get("URL_CANINE_QA",   "https://caninecommons-qa.cancer.gov"),
         "prod": os.environ.get("URL_CANINE_PROD",  "https://caninecommons.cancer.gov"),
-        "stage":os.environ.get("URL_CANINE_STAGE", ""),
+        "stage":os.environ.get("URL_CANINE_STAGE", "https://caninecommons-stage.cancer.gov"),
+    },
+    "ICDC": {
+        "qa":   os.environ.get("URL_ICDC_QA",    os.environ.get("URL_CANINE_QA",   "https://caninecommons-qa.cancer.gov")),
+        "prod": os.environ.get("URL_ICDC_PROD",  os.environ.get("URL_CANINE_PROD",  "https://caninecommons.cancer.gov")),
+        "stage":os.environ.get("URL_ICDC_STAGE", os.environ.get("URL_CANINE_STAGE", "https://caninecommons-stage.cancer.gov")),
     },
     "CCDC": {
         "qa":   os.environ.get("URL_CCDC_QA",   ""),
@@ -121,6 +133,17 @@ _PAGE_PATHS = {
         "Resources":  "/#/resources",
     },
     "Canine": {
+        "Home":       "/#/",
+        "Explore":    "/#/explore",
+        "Programs":   "/#/programs",
+        "Studies":    "/#/studies",
+        "Cart":       "/#/fileCentricCart",
+    },
+    "C3DC": {
+        "Home":    "/",
+        "Explore": "/#/exploreParticipants",
+    },
+    "ICDC": {
         "Home":       "/#/",
         "Explore":    "/#/explore",
         "Programs":   "/#/programs",
@@ -169,10 +192,66 @@ def get_page_url(program: str, page: str) -> str:
 
 
 # ── Memgraph connection ───────────────────────────────────────────────────────
+# Global (CDS / default). Per-app: MEMGRAPH_HOST_C3DC, MEMGRAPH_PASSWORD_C3DC, …
 MEMGRAPH_HOST     = os.environ.get("MEMGRAPH_HOST",     "")
 MEMGRAPH_PORT     = int(os.environ.get("MEMGRAPH_PORT", "7687"))
 MEMGRAPH_USERNAME = os.environ.get("MEMGRAPH_USERNAME", "")
 MEMGRAPH_PASSWORD = os.environ.get("MEMGRAPH_PASSWORD", "")
+
+_C3DC_QA_HOST = "bolt://ccdi-dcc-qa-99d933a8c11c2ea3.elb.us-east-1.amazonaws.com"
+_ICDC_QA_HOST = "bolt://ncidb-q600-c.nci.nih.gov"
+
+
+def get_memgraph_config(program: str | None = None) -> dict:
+    """Bolt settings for one commons app. C3DC and ICDC/Canine use their own clusters."""
+    prog = (program or "").upper()
+
+    def _first(*names: str, default: str = "") -> str:
+        for name in names:
+            val = os.environ.get(name)
+            if val:
+                return val
+        return default
+
+    if prog == "C3DC":
+        host = _first(
+            "MEMGRAPH_HOST_C3DC",
+            "MEMGRAPH_ENDPOINT_C3DC",
+            "memgraph_endpoint",
+            default=_C3DC_QA_HOST,
+        )
+        user = _first("MEMGRAPH_USERNAME_C3DC", "memgraph_username", default="memgraph")
+        password = _first("MEMGRAPH_PASSWORD_C3DC", "memgraph_password", default="")
+        port = int(_first("MEMGRAPH_PORT_C3DC", default=str(MEMGRAPH_PORT)))
+    elif prog in ("CANINE", "ICDC"):
+        host = _first(
+            "NEO4J_ENDPOINT_ICDC",
+            "NEO4J_HOST_ICDC",
+            "MEMGRAPH_HOST_CANINE",
+            "MEMGRAPH_HOST_ICDC",
+            default=_ICDC_QA_HOST,
+        )
+        user = _first(
+            "NEO4J_USERNAME_ICDC",
+            "MEMGRAPH_USERNAME_CANINE",
+            "MEMGRAPH_USERNAME_ICDC",
+            default="neo4j",
+        )
+        password = _first(
+            "NEO4J_PASSWORD_ICDC",
+            "MEMGRAPH_PASSWORD_CANINE",
+            "MEMGRAPH_PASSWORD_ICDC",
+            default="",
+        )
+        port = int(_first("NEO4J_PORT_ICDC", "MEMGRAPH_PORT_CANINE", default=str(MEMGRAPH_PORT)))
+    else:
+        suffix = f"_{prog}" if prog else ""
+        host = _first(f"MEMGRAPH_HOST{suffix}", "MEMGRAPH_HOST", default=MEMGRAPH_HOST)
+        user = _first(f"MEMGRAPH_USERNAME{suffix}", "MEMGRAPH_USERNAME", default=MEMGRAPH_USERNAME)
+        password = _first(f"MEMGRAPH_PASSWORD{suffix}", "MEMGRAPH_PASSWORD", default=MEMGRAPH_PASSWORD)
+        port = int(_first(f"MEMGRAPH_PORT{suffix}", default=str(MEMGRAPH_PORT)))
+
+    return {"host": host, "port": port, "username": user, "password": password}
 
 # ── Browser settings ─────────────────────────────────────────────────────────
 BROWSER         = os.environ.get("BROWSER", "chromium")

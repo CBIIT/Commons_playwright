@@ -174,7 +174,7 @@
     <p>Every piece of test data lives in exactly one place. Nothing is duplicated.</p>
     <div class="truth-table">
       <div class="truth-item"><div class="truth-what">Steps &amp; filter values</div><div class="truth-where">TC Excel → Steps sheet</div></div>
-      <div class="truth-item"><div class="truth-what">Cypher query templates</div><div class="truth-where">core/query_builder.py</div></div>
+      <div class="truth-item"><div class="truth-what">Cypher query templates</div><div class="truth-where">core/query_builder_cds.py</div></div>
       <div class="truth-item"><div class="truth-what">All URLs</div><div class="truth-where">config/settings.py</div></div>
       <div class="truth-item"><div class="truth-what">XPaths / locators</div><div class="truth-where">ObjectRepository Excel</div></div>
       <div class="truth-item"><div class="truth-what">Batch run list</div><div class="truth-where">Master suite Excel</div></div>
@@ -195,7 +195,7 @@
           <li>Maintains Python code</li>
           <li>Adds new actions to actions.py</li>
           <li>Maintains Object Repository Excel files</li>
-          <li>Writes Cypher templates in query_builder.py</li>
+          <li>Writes Cypher templates in query_builder_&lt;app&gt;.py (e.g. query_builder_cds.py)</li>
           <li>Manages Memgraph connection</li>
           <li>Documents allowed filter key names per program</li>
         </ul>
@@ -327,11 +327,11 @@ run_test_from_excel('TestCases/TC01_CDS.xlsx')
   <!-- ONE-OFF QUERIES -->
   <section>
     <h2><span class="num">5</span> One-Off Custom Queries</h2>
-    <p>The standard flow builds a Cypher query from the template in <code>query_builder.py</code> using the Filter column values. This covers 99% of TCs.</p>
+    <p>The standard flow builds a Cypher query from the app template in <code>core/query_builder_&lt;app&gt;.py</code> (via <code>query_builders.py</code>) using the Filter column values. This covers 99% of TCs.</p>
     <p>For the rare case where the standard template does not work, the tester adds a <strong>Queries sheet</strong> to that specific TC Excel.</p>
 
     <div class="callout warn">
-      <strong>Rule: If a Queries sheet exists → use it. If not → use query_builder.py template.</strong>
+      <strong>Rule: If a Queries sheet exists → use it. If not → use the app query_builder template.</strong>
       Tester adds a Queries sheet only when explicitly needed. Most TCs have no Queries sheet.
     </div>
 
@@ -372,8 +372,8 @@ run_test_from_excel('TestCases/TC01_CDS.xlsx')
     </div>
 
     <h3>Where the Cypher template lives</h3>
-    <p>Framework developer writes one template per tab per program in <code>core/query_builder.py</code>. Change the template once — all 100 TCs pick it up automatically. Tester never writes Cypher for standard tests.</p>
-    <pre><code># core/query_builder.py — framework developer writes once
+    <p>Framework developer writes one template per tab per program in <code>core/query_builder_cds.py</code>. Change the template once — all 100 TCs pick it up automatically. Tester never writes Cypher for standard tests.</p>
+    <pre><code># core/query_builder_cds.py — framework developer writes once
 CYPHER_TEMPLATES = {
     "CDS": {
         "ParticipantsTab": """
@@ -394,7 +394,7 @@ CYPHER_TEMPLATES = {
 # → WHERE s.phs='phs001437' AND p.gender='Unknown' AND sa.strategy='RNA-Seq'</code></pre>
 
     <div class="callout green">
-      <strong>Filter key names must match the placeholder mapping in query_builder.py.</strong>
+      <strong>Filter key names must match the placeholder mapping in the app query_builder module.</strong>
       Framework developer documents the allowed keys per program (e.g. <code>phs</code>, <code>sex</code>, <code>strategy</code>, <code>disease</code>). Tester uses those exact names in the Filter column.
     </div>
   </section>
@@ -439,7 +439,8 @@ CYPHER_TEMPLATES = {
 
     <h3><span class="tag tag-green">New</span> New files</h3>
     <div class="files">
-      <div class="file-item new"><div class="file-icon">🔧</div><div><div class="file-name">core/query_builder.py</div><div class="file-desc">Cypher templates per program/tab. Builds WHERE clause from Filter column values. Change once — all TCs update.</div></div></div>
+      <div class="file-item new"><div class="file-icon">🔧</div><div><div class="file-name">core/query_builders.py</div><div class="file-desc">Routes to query_builder_cds.py, query_builder_c3dc.py, etc.</div></div></div>
+      <div class="file-item new"><div class="file-icon">🔧</div><div><div class="file-name">core/query_builder_cds.py</div><div class="file-desc">CDS Cypher templates per tab. Builds WHERE from Filter column values.</div></div></div>
       <div class="file-item new"><div class="file-icon">🔌</div><div><div class="file-name">core/memgraph_reader.py</div><div class="file-desc">Connects to Memgraph, runs Cypher, returns rows for comparison.</div></div></div>
       <div class="file-item new"><div class="file-icon">▶️</div><div><div class="file-name">tests/run_suite.py</div><div class="file-desc">Batch runner: reads master playlist, runs all TCs, writes PASS/FAIL summary report.</div></div></div>
     </div>
@@ -475,13 +476,13 @@ CYPHER_TEMPLATES = {
     </ol>
 
     <h3>Updating the Cypher query for all TCs at once</h3>
-    <p>Edit one template in <code>core/query_builder.py</code>. All TCs pick it up on the next run. No Excel files touched.</p>
+    <p>Edit one template in <code>core/query_builder_cds.py</code>. All TCs pick it up on the next run. No Excel files touched.</p>
 
     <h3>Adding a new program (e.g. CCDI)</h3>
     <ol style="padding-left:20px;font-size:14px;color:var(--fg);line-height:2">
       <li>Create <code>ObjectRepository/CCDI_ObjectRepository.xlsx</code></li>
       <li>Add URLs to <code>config/settings.py</code></li>
-      <li>Add Cypher templates to <code>core/query_builder.py</code></li>
+      <li>Add Cypher templates to <code>core/query_builder_cds.py</code></li>
       <li>Create TC Excels — testers can start immediately</li>
     </ol>
 
